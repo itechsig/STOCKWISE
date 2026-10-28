@@ -1,0 +1,58 @@
+# Reference Excel data (kept locally, not versioned — see docs/excel-data-mapping.md)
+*.xlsx
+/data-reference/
+
+# Personal Windows Downloads folder — accidentally copied in, not part of the app
+/frontend/Downloads/
+
+# Accurate Firebird database — company data, read-only source, never versioned
+*.gdb
+*.GDB
+*.fdb
+*.FDB
+*.fbk
+*.FBK
+/database/accurate/
+# Sync Agent runtime state (processed-backup SQLite, job lock)
+/Config/
+/sync-service/.env
+/sync-service/.env.dummy
+/sync-service/logs/
+
+# Claude Code local settings (personal, not team-shared)
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Dev server / tooling logs
+*.log
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+
+# Root-level tooling
+/node_modules/
+/vendor/
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.dummy.example
+
+# company working folder (Excel + DATA BUKTI photos, ~800 MB) — input only, never commit
+/1. Dashboard Input Data/
+
+# Local backups
+Backup/
+*.sql
+.env
+.env.*
+!.env.example

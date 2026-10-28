@@ -1,0 +1,4 @@
+fdb
+pymysql
+python-dotenv
+requests

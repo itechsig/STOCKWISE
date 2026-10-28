@@ -1,0 +1,1345 @@
+<title>Alur Operasi STOCKWISE</title>
+<meta name="description" content="Runbook alur kerja STOCKWISE PT Surya Inti Gas: dari request barang sampai stok bergerak." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+/>
+
+<style>
+  :root {
+    --ground: #edf0f4;
+    --surface: #ffffff;
+    --surface-2: #f6f8fb;
+    --ink: #1a2330;
+    --ink-soft: #57636f;
+    --rule: #d5dce4;
+    --rule-soft: #e7ebf0;
+    --accent: #0f6fc4;
+    --accent-soft: #e2eef9;
+    --in: #1c8a4e;
+    --out: #c53f28;
+    --hold: #a9760f;
+    --mute: #7a8698;
+    --shadow: 0 1px 2px rgba(20, 30, 45, 0.06), 0 14px 34px -18px rgba(20, 30, 45, 0.22);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --ground: #0f141a;
+      --surface: #171d25;
+      --surface-2: #1b222b;
+      --ink: #e6ebf1;
+      --ink-soft: #9aa7b6;
+      --rule: #2b333e;
+      --rule-soft: #232a33;
+      --accent: #4aa3e8;
+      --accent-soft: #15303f;
+      --in: #40af6e;
+      --out: #e0654c;
+      --hold: #d29a3a;
+      --mute: #7f8b9a;
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px -18px rgba(0, 0, 0, 0.6);
+    }
+  }
+  :root[data-theme='dark'] {
+    --ground: #0f141a;
+    --surface: #171d25;
+    --surface-2: #1b222b;
+    --ink: #e6ebf1;
+    --ink-soft: #9aa7b6;
+    --rule: #2b333e;
+    --rule-soft: #232a33;
+    --accent: #4aa3e8;
+    --accent-soft: #15303f;
+    --in: #40af6e;
+    --out: #e0654c;
+    --hold: #d29a3a;
+    --mute: #7f8b9a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 16px 40px -18px rgba(0, 0, 0, 0.6);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', ui-sans-serif, system-ui, 'Segoe UI', Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--rule);
+  }
+  .topbar-inner {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .brand {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-size: 13px;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .brand span {
+    color: var(--accent);
+  }
+  .topnav {
+    display: flex;
+    gap: 2px;
+    overflow-x: auto;
+    flex: 1;
+    scrollbar-width: none;
+  }
+  .topnav::-webkit-scrollbar {
+    display: none;
+  }
+  .topnav a {
+    flex: none;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    text-decoration: none;
+    padding: 5px 9px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .topnav a:hover {
+    background: var(--surface-2);
+    color: var(--ink);
+  }
+  .theme-btn {
+    flex: none;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    color: var(--ink-soft);
+    border-radius: 7px;
+    width: 32px;
+    height: 30px;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+  }
+  .theme-btn:hover {
+    color: var(--ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .wrap {
+    max-width: 768px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+  .bleed {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  header.intro {
+    padding: 68px 0 40px;
+  }
+  .eyebrow {
+    font-family: 'Archivo', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 700;
+    font-size: clamp(2rem, 1.4rem + 2.6vw, 3.1rem);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin: 0 0 18px;
+  }
+  .lede {
+    font-size: 1.12rem;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 26px;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    font-size: 13px;
+    color: var(--mute);
+    font-family: 'IBM Plex Mono', monospace;
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+  }
+
+  section.stage,
+  section.ref {
+    padding: 44px 0;
+    border-top: 1px solid var(--rule);
+    scroll-margin-top: 64px;
+  }
+  section.stage:first-of-type {
+    border-top: none;
+  }
+
+  .stage-head {
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+    margin-bottom: 8px;
+  }
+  .stage-no {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    padding-top: 6px;
+    flex: none;
+    width: 26px;
+  }
+  h2 {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 700;
+    font-size: 1.62rem;
+    letter-spacing: -0.015em;
+    line-height: 1.15;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .ref h2 {
+    margin-left: 0;
+  }
+  h3 {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin: 30px 0 10px;
+  }
+  p {
+    margin: 0 0 16px;
+  }
+  .stage-body {
+    margin-left: 42px;
+  }
+  @media (max-width: 640px) {
+    .stage-body {
+      margin-left: 0;
+    }
+    .stage-head {
+      gap: 10px;
+    }
+  }
+
+  code,
+  .mono {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.88em;
+  }
+  code {
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    border-radius: 4px;
+    padding: 0.08em 0.36em;
+  }
+  strong {
+    font-weight: 600;
+  }
+  a.inline {
+    color: var(--accent);
+  }
+
+  /* actor / trigger / effect strip */
+  .ate {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 18px 0 22px;
+  }
+  .ate > div {
+    background: var(--surface);
+    padding: 12px 14px;
+  }
+  .ate dt {
+    font-family: 'Archivo', sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--mute);
+    margin-bottom: 3px;
+  }
+  .ate dd {
+    margin: 0;
+    font-size: 13.5px;
+  }
+  @media (max-width: 560px) {
+    .ate {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  figure {
+    margin: 24px 0;
+  }
+  .fig-card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 22px 20px 14px;
+  }
+  .fig-scroll {
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+  }
+  figcaption {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin-top: 12px;
+    max-width: 68ch;
+  }
+  .fig-scroll + figcaption {
+    margin-top: 14px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    margin: 14px 0 22px;
+  }
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+  }
+  .table-scroll table {
+    margin: 0;
+    min-width: 520px;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--mute);
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--rule);
+  }
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+  td .mono {
+    color: var(--ink-soft);
+  }
+  td.num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .pill {
+    display: inline-block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 5px;
+    border: 1px solid var(--rule);
+    background: var(--surface-2);
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .pill.in {
+    color: var(--in);
+    border-color: color-mix(in srgb, var(--in) 40%, var(--rule));
+    background: color-mix(in srgb, var(--in) 10%, transparent);
+  }
+  .pill.out {
+    color: var(--out);
+    border-color: color-mix(in srgb, var(--out) 40%, var(--rule));
+    background: color-mix(in srgb, var(--out) 10%, transparent);
+  }
+  .pill.hold {
+    color: var(--hold);
+    border-color: color-mix(in srgb, var(--hold) 40%, var(--rule));
+    background: color-mix(in srgb, var(--hold) 12%, transparent);
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    overflow: hidden;
+    margin: 22px 0;
+  }
+  .split > div {
+    background: var(--surface);
+    padding: 18px 18px 20px;
+  }
+  .split h4 {
+    font-family: 'Archivo', sans-serif;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .split h4::before {
+    content: '';
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .split .b::before {
+    background: var(--mute);
+  }
+  .split ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13.5px;
+  }
+  .split li {
+    margin-bottom: 7px;
+  }
+  .split li span {
+    color: var(--mute);
+    font-size: 12px;
+  }
+  @media (max-width: 620px) {
+    .split {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .track-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+    gap: 14px;
+    margin: 22px 0;
+  }
+  .track {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 15px 15px 16px;
+  }
+  .track h4 {
+    font-family: 'Archivo', sans-serif;
+    font-size: 13.5px;
+    margin: 0 0 4px;
+  }
+  .track .sub {
+    font-size: 12px;
+    color: var(--mute);
+    margin: 0 0 11px;
+  }
+  .track .flow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: var(--ink-soft);
+  }
+  .track .io {
+    margin-top: 11px;
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 14px 16px;
+    border-radius: 0 8px 8px 0;
+    font-size: 14px;
+    margin: 20px 0;
+  }
+  .callout strong {
+    color: var(--accent);
+  }
+
+  .formula {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 18px 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    line-height: 1.9;
+    overflow-x: auto;
+    margin: 16px 0;
+  }
+  .formula .k {
+    color: var(--accent);
+  }
+  .formula .c {
+    color: var(--mute);
+  }
+  .formula b {
+    color: var(--out);
+    font-weight: 500;
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 34px 0 60px;
+    font-size: 13px;
+    color: var(--mute);
+  }
+  footer .mono {
+    color: var(--ink-soft);
+  }
+
+  /* diagram text defaults */
+  svg text {
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .n-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+  }
+</style>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <span class="brand">STOCK<span>WISE</span></span>
+    <nav class="topnav" aria-label="Bagian dokumen">
+      <a href="#peta">Peta besar</a>
+      <a href="#request">Request</a>
+      <a href="#review">Cek fisik</a>
+      <a href="#npbg">NPBG &amp; ambil</a>
+      <a href="#pengadaan">Pengadaan</a>
+      <a href="#opname">Opname</a>
+      <a href="#tracking">Tracking</a>
+      <a href="#peran">Peran</a>
+      <a href="#gerak">Gerak stok</a>
+      <a href="#hitung">Mesin hitung</a>
+      <a href="#nomor">Penomoran</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Ganti tema terang/gelap">◐</button>
+  </div>
+</div>
+
+<header class="intro wrap">
+  <p class="eyebrow">Runbook Operasi &middot; PT Surya Inti Gas</p>
+  <h1>Alur Operasi STOCKWISE</h1>
+  <p class="lede">
+    Bagaimana satu permintaan barang bergerak dari karyawan sampai stok benar-benar berubah di
+    gudang &mdash; siapa yang bertindak di tiap tahap, apa syaratnya, dan kapan angka
+    <code>actual_qty</code> naik atau turun.
+  </p>
+  <div class="meta-row">
+    <span>Backend: Laravel + MySQL</span>
+    <span>Frontend: React</span>
+    <span>7 peran RBAC</span>
+    <span>2 site &middot; SIG-SDA, SIG-BPN</span>
+  </div>
+</header>
+
+<section class="stage bleed" id="peta">
+  <div class="stage-head">
+    <span class="stage-no">00</span>
+    <h2>Peta besar: kapan stok berubah</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      STOCKWISE memisahkan tiga angka: <strong>actual</strong> (fisik di rak),
+      <strong>reserved</strong> (sudah dijanjikan ke request), dan
+      <strong>available = actual &minus; reserved</strong>. Setiap perubahan stok ditulis sebagai
+      baris <code>stock_movements</code> di dalam satu transaksi database &mdash; tabel itu tidak
+      pernah diubah langsung.
+    </p>
+
+    <figure>
+      <div class="fig-card fig-scroll">
+        <svg viewBox="0 0 720 300" role="img" aria-label="Grafik langkah actual_qty dan available sepanjang hidup satu item, menandai lima kejadian: saldo awal, reservasi, pengambilan NPBG, penerimaan RI, dan opname">
+          <!-- axes -->
+          <line x1="52" y1="20" x2="52" y2="244" stroke="currentColor" stroke-opacity="0.28" />
+          <line x1="52" y1="244" x2="700" y2="244" stroke="currentColor" stroke-opacity="0.28" />
+          <!-- y ticks -->
+          <g fill="currentColor" fill-opacity="0.5" font-size="10" text-anchor="end">
+            <text x="44" y="244">0</text>
+            <text x="44" y="171.3">40</text>
+            <text x="44" y="98.7">80</text>
+            <text x="44" y="26">120</text>
+          </g>
+          <g stroke="currentColor" stroke-opacity="0.08">
+            <line x1="52" y1="171.3" x2="700" y2="171.3" />
+            <line x1="52" y1="98.7" x2="700" y2="98.7" />
+          </g>
+          <!-- event markers -->
+          <g stroke="currentColor" stroke-opacity="0.22" stroke-dasharray="3 3">
+            <line x1="180" y1="20" x2="180" y2="244" />
+            <line x1="316" y1="20" x2="316" y2="244" />
+            <line x1="452" y1="20" x2="452" y2="244" />
+            <line x1="576" y1="20" x2="576" y2="244" />
+          </g>
+          <!-- available (dashed) : 80,60,60,100,95 -->
+          <polyline
+            points="52,99 180,99 180,135 316,135 316,135 452,63 452,63 576,63 576,72 700,72"
+            fill="none" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.6" stroke-dasharray="5 4" />
+          <!-- actual (solid) : 80,80,60,100,95 -->
+          <g style="color: var(--accent)">
+            <polyline
+              points="52,99 316,99 316,135 452,135 452,63 576,63 576,72 700,72"
+              fill="none" stroke="currentColor" stroke-width="2.4" />
+          </g>
+          <!-- movement dots -->
+          <g>
+            <circle cx="316" cy="135" r="3.4" style="color: var(--out)" fill="currentColor" />
+            <circle cx="452" cy="63" r="3.4" style="color: var(--in)" fill="currentColor" />
+            <circle cx="576" cy="72" r="3.4" style="color: var(--hold)" fill="currentColor" />
+          </g>
+          <!-- x labels -->
+          <g fill="currentColor" fill-opacity="0.62" font-size="10.5" text-anchor="middle">
+            <text x="90" y="262">Saldo awal</text>
+            <text x="180" y="262">Reservasi</text>
+            <text x="316" y="262">Ambil (NPBG)</text>
+            <text x="452" y="262">Terima (RI)</text>
+            <text x="576" y="262">Opname</text>
+          </g>
+          <g fill="currentColor" fill-opacity="0.42" font-size="9.5" text-anchor="middle" class="n-label">
+            <text x="180" y="276">reserved +20</text>
+            <text x="316" y="276">actual &minus;20</text>
+            <text x="452" y="276">actual +40</text>
+            <text x="576" y="276">actual &minus;5</text>
+          </g>
+          <!-- legend -->
+          <g font-size="11" fill="currentColor">
+            <line x1="430" y1="16" x2="456" y2="16" style="color: var(--accent)" stroke="currentColor" stroke-width="2.4" />
+            <text x="462" y="19.5" fill-opacity="0.75">actual_qty</text>
+            <line x1="556" y1="16" x2="582" y2="16" stroke="currentColor" stroke-opacity="0.55" stroke-width="1.6" stroke-dasharray="5 4" />
+            <text x="588" y="19.5" fill-opacity="0.75">available</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        <code>actual_qty</code> hanya berubah pada tiga kejadian: <span class="pill out">STOCK_OUT</span>
+        saat NPBG diambil, <span class="pill in">RECEIVING</span> saat penerimaan RI dikonfirmasi, dan
+        <span class="pill hold">STOCK_ADJUSTMENT</span> saat opname disetujui. Reservasi hanya menahan
+        stok &mdash; <code>available</code> turun, <code>actual</code> tetap.
+      </figcaption>
+    </figure>
+
+    <div class="callout">
+      <strong>Aturan mutlak.</strong> Stok turun saat <em>pengambilan</em> NPBG, naik saat penerimaan
+      RI <em>dikonfirmasi</em> (bukan saat RI dibuat), dan disesuaikan hanya setelah opname
+      <em>disetujui</em> Admin Gudang. Anak Gudang tidak pernah mengubah <code>actual</code> langsung.
+    </div>
+  </div>
+</section>
+
+<section class="stage bleed" id="request">
+  <div class="stage-head">
+    <span class="stage-no">01</span>
+    <h2>Request barang</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      Karyawan membuat permintaan barang. Nomor dibuat otomatis mengikuti pola
+      <code>REQ/&lt;SITE&gt;/&lt;YY&gt;/&lt;BULAN-ROMAWI&gt;/&lt;URUT&gt;</code> &mdash; misalnya
+      <code>REQ/SDA/26/IX/001</code>.
+    </p>
+
+    <dl class="ate">
+      <div><dt>Aktor</dt><dd>Karyawan (pemilik request)</dd></div>
+      <div><dt>Pemicu</dt><dd>Kirim form dari status <code>DRAFT</code></dd></div>
+      <div><dt>Efek</dt><dd>Snapshot stok &amp; <em>projected</em> per baris, notifikasi Admin Gudang</dd></div>
+    </dl>
+
+    <h3>Isi form</h3>
+    <div class="split">
+      <div>
+        <h4>Diisi peminta</h4>
+        <ul>
+          <li>Tanggal <span>&mdash; default hari ini</span></li>
+          <li>Nama Peminta <span>&mdash; default nama akun, bisa diganti</span></li>
+          <li>WhatsApp Peminta <span>&mdash; terisi otomatis dari nomor akun</span></li>
+          <li>Nama Barang <span>&mdash; pilih dari master atau ketik bebas</span></li>
+          <li>QTY</li>
+          <li>UOM / satuan <span>&mdash; ikut master barang; manual jika baris bebas</span></li>
+          <li>Keterangan &amp; Catatan</li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="b">Diisi sistem / Admin Gudang</h4>
+        <ul>
+          <li>Lokasi permintaan <span>&mdash; otomatis dari IP: Jaringan Kantor / Di Luar Kantor</span></li>
+          <li>Snapshot stok sistem, safety stock, projected <span>&mdash; otomatis saat submit &amp; review</span></li>
+          <li><code>No NPBG</code> <span>&mdash; Admin Gudang; terisi otomatis saat NPBG dibuat</span></li>
+          <li><code>Nomor PPB</code> <span>&mdash; Admin Gudang; terisi otomatis saat PPB dibuat</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <h3>Daur hidup status</h3>
+    <figure>
+      <div class="fig-card fig-scroll">
+        <svg viewBox="0 0 980 300" role="img" aria-label="Mesin status Material Request: DRAFT ke SUBMITTED ke UNDER_REVIEW, lalu bercabang ke READY, PARTIAL, atau NEED_PURCHASE, menuju RESERVED, PREPARING, READY_TO_PICKUP, PICKED_UP, COMPLETED, dengan CANCELLED sebagai jalur keluar">
+          <defs>
+            <marker id="arReq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          <g stroke="currentColor" stroke-opacity="0.85" fill="none" marker-end="url(#arReq)">
+            <line x1="132" y1="52" x2="176" y2="52" />
+            <line x1="308" y1="52" x2="352" y2="52" />
+            <line x1="500" y1="45" x2="548" y2="34" />
+            <line x1="620" y1="34" x2="664" y2="45" />
+            <line x1="742" y1="60" x2="742" y2="104" />
+            <line x1="700" y1="150" x2="612" y2="150" />
+            <line x1="470" y1="150" x2="404" y2="150" />
+            <line x1="256" y1="150" x2="200" y2="150" />
+          </g>
+          <!-- soft branch links -->
+          <g stroke="currentColor" stroke-opacity="0.35" fill="none" stroke-dasharray="4 3">
+            <line x1="500" y1="52" x2="548" y2="69" />
+            <line x1="500" y1="56" x2="548" y2="104" />
+          </g>
+
+          <g class="node">
+            <!-- row A -->
+            <g>
+              <rect x="40" y="34" width="92" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="86" y="56" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">DRAFT</text>
+            </g>
+            <g>
+              <rect x="176" y="34" width="132" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="242" y="56" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">SUBMITTED</text>
+            </g>
+            <g>
+              <rect x="352" y="34" width="148" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="426" y="56" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">UNDER_REVIEW</text>
+            </g>
+            <!-- branch outcomes -->
+            <g style="color: var(--in)">
+              <rect x="548" y="16" width="76" height="32" rx="8" fill="color-mix(in srgb, var(--in) 12%, transparent)" stroke="currentColor" stroke-opacity="0.6" />
+              <text x="586" y="36" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">READY</text>
+            </g>
+            <g style="color: var(--hold)">
+              <rect x="548" y="54" width="82" height="30" rx="8" fill="color-mix(in srgb, var(--hold) 12%, transparent)" stroke="currentColor" stroke-opacity="0.55" />
+              <text x="589" y="73" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">PARTIAL</text>
+            </g>
+            <g style="color: var(--out)">
+              <rect x="548" y="90" width="118" height="30" rx="8" fill="color-mix(in srgb, var(--out) 10%, transparent)" stroke="currentColor" stroke-opacity="0.5" />
+              <text x="607" y="109" text-anchor="middle" font-size="10.5" class="n-label" fill="currentColor">NEED_PURCHASE</text>
+            </g>
+            <g>
+              <rect x="664" y="34" width="116" height="36" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" />
+              <text x="722" y="56" text-anchor="middle" font-size="12" class="n-label" fill="var(--accent)">RESERVED</text>
+            </g>
+            <!-- row B -->
+            <g>
+              <rect x="612" y="132" width="118" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="671" y="154" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">PREPARING</text>
+            </g>
+            <g>
+              <rect x="404" y="132" width="176" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="492" y="154" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">READY_TO_PICKUP</text>
+            </g>
+            <g style="color: var(--out)">
+              <rect x="200" y="132" width="118" height="36" rx="8" fill="color-mix(in srgb, var(--out) 10%, transparent)" stroke="currentColor" stroke-opacity="0.55" />
+              <text x="259" y="154" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">PICKED_UP</text>
+            </g>
+            <g style="color: var(--in)">
+              <rect x="60" y="132" width="118" height="36" rx="8" fill="color-mix(in srgb, var(--in) 12%, transparent)" stroke="currentColor" stroke-opacity="0.6" />
+              <text x="119" y="154" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">COMPLETED</text>
+            </g>
+            <!-- cancelled -->
+            <g style="color: var(--mute)">
+              <rect x="404" y="228" width="110" height="34" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.5" stroke-dasharray="4 3" />
+              <text x="459" y="249" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">CANCELLED</text>
+            </g>
+            <path d="M300,168 L300,245 L402,245" stroke="currentColor" stroke-opacity="0.3" stroke-dasharray="4 3" fill="none" marker-end="url(#arReq)" />
+          </g>
+
+          <!-- edge labels -->
+          <g fill="currentColor" fill-opacity="0.55" font-size="10" text-anchor="middle">
+            <text x="154" y="44">submit</text>
+            <text x="330" y="44">ambil</text>
+            <text x="524" y="20">reserve</text>
+            <text x="642" y="20">buat NPBG</text>
+            <text x="764" y="92">siapkan</text>
+            <text x="656" y="142">barang siap</text>
+            <text x="437" y="142">pickup + ttd</text>
+            <text x="240" y="142">semua keluar</text>
+            <text x="352" y="240">batal (sebelum PICKED_UP)</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Saat review, tiap baris dinilai terpisah. Semua baris cukup &rarr; <code>READY</code>. Sebagian
+        cukup &rarr; <code>PARTIAL</code> (barang siap dikeluarkan dulu, sisanya menunggu PO). Ada baris
+        kurang &rarr; <code>NEED_PURCHASE</code>, memicu PPB untuk kekurangannya. Membatalkan me-release
+        semua reservasi.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="stage bleed" id="review">
+  <div class="stage-head">
+    <span class="stage-no">02</span>
+    <h2>Review &amp; cek fisik gudang</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      Admin Gudang mengambil request (<code>SUBMITTED &rarr; UNDER_REVIEW</code>). Sistem menampilkan
+      stok sistem terakhir per baris. Sebelum reservasi, gudang wajib memverifikasi bahwa barang
+      benar-benar ada secara fisik sesuai sistem.
+    </p>
+
+    <dl class="ate">
+      <div><dt>Aktor</dt><dd>Admin Gudang / Anak Gudang</dd></div>
+      <div><dt>Pemicu</dt><dd>Cek fisik per baris: <code>VERIFIED_MATCH</code> atau <code>VERIFIED_MISMATCH</code></dd></div>
+      <div><dt>Efek</dt><dd>Hitung <em>projected</em> &amp; flag di bawah safety stock; mismatch memblokir reservasi</dd></div>
+    </dl>
+
+    <figure>
+      <div class="fig-card fig-scroll">
+        <svg viewBox="0 0 700 240" role="img" aria-label="Cabang cek fisik: dari review, baris dengan VERIFIED_MATCH lanjut ke reserve; baris dengan VERIFIED_MISMATCH diblokir dan memunculkan saran Stock Opname">
+          <defs>
+            <marker id="arChk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          <g>
+            <rect x="30" y="98" width="150" height="42" rx="9" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="105" y="124" text-anchor="middle" font-size="12.5" fill="currentColor">Review baris</text>
+          </g>
+          <path d="M180,110 C 230,110 240,58 288,58" fill="none" stroke="currentColor" stroke-opacity="0.8" marker-end="url(#arChk)" />
+          <path d="M180,128 C 230,128 240,178 288,178" fill="none" stroke="currentColor" stroke-opacity="0.8" marker-end="url(#arChk)" />
+          <text x="214" y="74" font-size="10" fill="currentColor" fill-opacity="0.6">fisik cocok</text>
+          <text x="206" y="164" font-size="10" fill="currentColor" fill-opacity="0.6">fisik beda</text>
+
+          <g style="color: var(--in)">
+            <rect x="288" y="38" width="180" height="40" rx="9" fill="color-mix(in srgb, var(--in) 12%, transparent)" stroke="currentColor" stroke-opacity="0.6" />
+            <text x="378" y="63" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">VERIFIED_MATCH</text>
+          </g>
+          <g style="color: var(--out)">
+            <rect x="288" y="158" width="190" height="40" rx="9" fill="color-mix(in srgb, var(--out) 10%, transparent)" stroke="currentColor" stroke-opacity="0.55" />
+            <text x="383" y="183" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">VERIFIED_MISMATCH</text>
+          </g>
+
+          <line x1="468" y1="58" x2="512" y2="58" stroke="currentColor" stroke-opacity="0.8" fill="none" marker-end="url(#arChk)" />
+          <line x1="478" y1="178" x2="512" y2="178" stroke="currentColor" stroke-opacity="0.8" fill="none" marker-end="url(#arChk)" />
+
+          <g style="color: var(--accent)">
+            <rect x="512" y="38" width="150" height="40" rx="9" fill="var(--accent-soft)" stroke="currentColor" />
+            <text x="587" y="63" text-anchor="middle" font-size="12" class="n-label" fill="currentColor">RESERVE</text>
+          </g>
+          <g style="color: var(--hold)">
+            <rect x="512" y="150" width="158" height="56" rx="9" fill="color-mix(in srgb, var(--hold) 12%, transparent)" stroke="currentColor" stroke-opacity="0.55" />
+            <text x="591" y="172" text-anchor="middle" font-size="11.5" fill="currentColor">Diblokir &mdash;</text>
+            <text x="591" y="189" text-anchor="middle" font-size="11.5" fill="currentColor">saran Stock</text>
+            <text x="591" y="200" text-anchor="middle" font-size="11.5" fill="currentColor">Opname item</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Aturan NC-10: baris tidak boleh masuk <code>RESERVED</code> selama
+        <code>physical_check_status = VERIFIED_MISMATCH</code> belum diselesaikan. Selisih fisik
+        mengarahkan item itu ke Stock Opname.
+      </figcaption>
+    </figure>
+
+    <h3>Reservasi stok</h3>
+    <p>
+      Saat Admin Gudang menekan <em>Reserve</em>, untuk tiap baris yang stoknya cukup dibuat movement
+      <span class="pill hold">RESERVATION</span> dan baris <code>stock_reservations</code> berstatus
+      <code>ACTIVE</code> (kedaluwarsa default 14 hari). <code>actual</code> tidak berubah;
+      <code>reserved</code> naik, sehingga <code>available</code> turun. Kekurangan pada baris apa pun
+      membuat status request menjadi <code>PARTIAL</code> atau <code>NEED_PURCHASE</code>.
+    </p>
+  </div>
+</section>
+
+<section class="stage bleed" id="npbg">
+  <div class="stage-head">
+    <span class="stage-no">03</span>
+    <h2>NPBG &amp; pengambilan barang</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      Dari request <code>RESERVED</code> / <code>PARTIAL</code>, Admin Gudang membuat
+      <strong>NPBG</strong> (Nota Pengeluaran Barang Gudang). Nomornya otomatis mengisi kolom
+      <code>No NPBG</code> di request. Barang disiapkan fisik oleh Lapangan Gudang, lalu diambil
+      peminta dengan tanda tangan.
+    </p>
+
+    <dl class="ate">
+      <div><dt>Aktor</dt><dd>Admin Gudang (buat) &middot; Lapangan Gudang (siapkan &amp; serahkan)</dd></div>
+      <div><dt>Pemicu</dt><dd>Pengambilan: verifikasi peminta + barang + qty, tanda tangan</dd></div>
+      <div><dt>Efek</dt><dd><code>STOCK_OUT</code> per baris &mdash; <code>actual&minus;</code>, <code>reserved&minus;</code>, reservasi &rarr; <code>CONSUMED</code></dd></div>
+    </dl>
+
+    <figure>
+      <div class="fig-card fig-scroll">
+        <svg viewBox="0 0 720 232" role="img" aria-label="Alur NPBG: PREPARING ke READY_TO_PICKUP ke PICKED_UP ke COMPLETED, dengan efek samping pengambilan berupa movement STOCK_OUT yang menurunkan actual dan reserved dan menandai reservasi CONSUMED">
+          <defs>
+            <marker id="arNp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          <g stroke="currentColor" stroke-opacity="0.85" fill="none" marker-end="url(#arNp)">
+            <line x1="150" y1="46" x2="196" y2="46" />
+            <line x1="360" y1="46" x2="406" y2="46" />
+            <line x1="536" y1="46" x2="582" y2="46" />
+          </g>
+          <g>
+            <rect x="30" y="28" width="120" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="90" y="50" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">PREPARING</text>
+            <rect x="196" y="28" width="164" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="278" y="50" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">READY_TO_PICKUP</text>
+            <g style="color: var(--out)">
+              <rect x="406" y="28" width="130" height="36" rx="8" fill="color-mix(in srgb, var(--out) 10%, transparent)" stroke="currentColor" stroke-opacity="0.6" />
+              <text x="471" y="50" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">PICKED_UP</text>
+            </g>
+            <g style="color: var(--in)">
+              <rect x="582" y="28" width="120" height="36" rx="8" fill="color-mix(in srgb, var(--in) 12%, transparent)" stroke="currentColor" stroke-opacity="0.6" />
+              <text x="642" y="50" text-anchor="middle" font-size="11.5" class="n-label" fill="currentColor">COMPLETED</text>
+            </g>
+          </g>
+          <g fill="currentColor" fill-opacity="0.55" font-size="10" text-anchor="middle">
+            <text x="173" y="38">siap</text>
+            <text x="383" y="38">pickup + ttd</text>
+            <text x="559" y="38">semua item keluar</text>
+          </g>
+
+          <!-- side effect -->
+          <line x1="471" y1="64" x2="471" y2="104" stroke="currentColor" stroke-opacity="0.5" stroke-dasharray="4 3" marker-end="url(#arNp)" />
+          <g style="color: var(--out)">
+            <rect x="286" y="104" width="370" height="104" rx="11" fill="color-mix(in srgb, var(--out) 8%, transparent)" stroke="currentColor" stroke-opacity="0.45" />
+          </g>
+          <text x="304" y="126" font-size="11" font-family="'IBM Plex Mono', monospace" fill="currentColor" fill-opacity="0.9">movement: STOCK_OUT (qty_issued)</text>
+          <g font-size="11.5" fill="currentColor" fill-opacity="0.8">
+            <text x="304" y="148">&bull; inventory.actual_qty &minus;= qty</text>
+            <text x="304" y="167">&bull; inventory.reserved_qty &minus;= qty</text>
+            <text x="304" y="186">&bull; stock_reservations &rarr; CONSUMED</text>
+            <text x="304" y="203" fill-opacity="0.55">&bull; wajib: signature_path + picked_up_by</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Untuk <code>PARTIAL</code>: barang yang siap dikeluarkan lewat NPBG pertama, sisanya lewat NPBG
+        kedua setelah PO diterima. Request tetap <code>PARTIAL</code> sampai semua baris
+        <code>COMPLETED</code>. Membatalkan NPBG sebelum pickup me-release reservasi.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="stage bleed" id="pengadaan">
+  <div class="stage-head">
+    <span class="stage-no">04</span>
+    <h2>Pengadaan: PPB &rarr; PO &rarr; Penerimaan</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      Kekurangan stok memicu <strong>PPB</strong> (Permintaan Pembelian Barang). Setelah disetujui,
+      Purchasing membuat <strong>Purchase Order</strong> ke vendor. Barang datang dicatat sebagai
+      <strong>Penerimaan (RI)</strong>, dan stok baru bertambah ketika RI <em>dikonfirmasi</em>.
+    </p>
+
+    <dl class="ate">
+      <div><dt>Aktor</dt><dd>Admin Gudang (PPB) &middot; Purchasing (PO, RI)</dd></div>
+      <div><dt>Pemicu</dt><dd>PPB approve &rarr; PO approve &amp; kirim &rarr; RI confirm</dd></div>
+      <div><dt>Efek</dt><dd>Stok naik <span class="pill in">RECEIVING</span> hanya saat RI <code>CONFIRMED</code></dd></div>
+    </dl>
+
+    <figure>
+      <div class="fig-card fig-scroll">
+        <svg viewBox="0 0 960 220" role="img" aria-label="Rantai pengadaan: Request NEED_PURCHASE menghasilkan PPB yang disetujui, lalu Purchase Order yang disetujui dan dikirim, lalu Penerimaan yang diperiksa dan dikonfirmasi; stok hanya bertambah pada titik RI CONFIRMED">
+          <defs>
+            <marker id="arPo" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          <g stroke="currentColor" stroke-opacity="0.85" fill="none" marker-end="url(#arPo)">
+            <line x1="184" y1="70" x2="228" y2="70" />
+            <line x1="372" y1="70" x2="416" y2="70" />
+            <line x1="560" y1="70" x2="604" y2="70" />
+            <line x1="748" y1="70" x2="792" y2="70" />
+          </g>
+          <g fill="currentColor" fill-opacity="0.55" font-size="10" text-anchor="middle">
+            <text x="206" y="60">from-request</text>
+            <text x="394" y="60">approve</text>
+            <text x="582" y="60">approve + kirim</text>
+            <text x="770" y="60">buat RI</text>
+          </g>
+          <g>
+            <g style="color: var(--out)">
+              <rect x="26" y="50" width="158" height="40" rx="9" fill="color-mix(in srgb, var(--out) 9%, transparent)" stroke="currentColor" stroke-opacity="0.5" />
+              <text x="105" y="68" text-anchor="middle" font-size="10.5" class="n-label" fill="currentColor">REQUEST</text>
+              <text x="105" y="82" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.7">NEED_PURCHASE</text>
+            </g>
+            <g>
+              <rect x="228" y="50" width="144" height="40" rx="9" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="300" y="68" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">PPB</text>
+              <text x="300" y="82" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.7">APPROVED</text>
+            </g>
+            <g>
+              <rect x="416" y="50" width="144" height="40" rx="9" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="488" y="68" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">PURCHASE ORDER</text>
+              <text x="488" y="82" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.7">SENT</text>
+            </g>
+            <g>
+              <rect x="604" y="50" width="144" height="40" rx="9" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+              <text x="676" y="68" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">RECEIVING</text>
+              <text x="676" y="82" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.7">CHECKING</text>
+            </g>
+            <g style="color: var(--in)">
+              <rect x="792" y="46" width="150" height="48" rx="9" fill="color-mix(in srgb, var(--in) 12%, transparent)" stroke="currentColor" stroke-opacity="0.65" />
+              <text x="867" y="66" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">RI CONFIRMED</text>
+              <text x="867" y="82" text-anchor="middle" font-size="9.5" fill="currentColor" fill-opacity="0.85">actual += qty_accepted</text>
+            </g>
+          </g>
+          <!-- stock marker -->
+          <line x1="867" y1="94" x2="867" y2="128" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="4 3" />
+          <text x="867" y="150" text-anchor="middle" font-size="10.5" fill="currentColor" fill-opacity="0.75">satu-satunya titik stok bertambah</text>
+          <text x="300" y="150" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.5">snapshot safety stock, defisit, skor prioritas per baris</text>
+        </svg>
+      </div>
+      <figcaption>
+        RI penuh &rarr; PO <code>RECEIVED</code> &rarr; PPB dievaluasi ulang jadi <code>RECEIVED</code>.
+        Setelah stok masuk, baris request <code>NEED_PURCHASE</code> dinilai ulang dan lanjut normal
+        ke reservasi &amp; NPBG. RI juga menampung retur (source <code>LEND_RETURN</code>,
+        <code>STPP_RETURN</code>, dll.) dan output manufaktur.
+      </figcaption>
+    </figure>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Dokumen</th><th>Status</th><th>Catatan</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">PPB</td><td>DRAFT &rarr; SUBMITTED &rarr; REVIEW &rarr; APPROVED</td><td>Reject &rarr; <code>CANCELLED</code>. Amend / close via <code>ppb_amendments</code>.</td></tr>
+          <tr><td class="mono">Purchase Order</td><td>DRAFT &rarr; APPROVED &rarr; SENT &rarr; PARTIAL_RECEIVED &rarr; RECEIVED</td><td>Batal hanya sebelum ada RI. <code>qty_received</code> ikut RI yang <code>CONFIRMED</code>.</td></tr>
+          <tr><td class="mono">Receiving (RI)</td><td>CHECKING &rarr; CONFIRMED</td><td>Sebagian ditolak &rarr; catat RI lain. Semua ditolak &rarr; <code>REJECTED</code>. Stok <strong>tidak</strong> bertambah sebelum <code>CONFIRMED</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="stage bleed" id="opname">
+  <div class="stage-head">
+    <span class="stage-no">05</span>
+    <h2>Stock Opname</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      Opname dijadwalkan per gudang. Anak Gudang menghitung fisik tiap baris, lalu submit. Admin
+      Gudang mereview per item. Hanya item yang <strong>disetujui</strong> dan berselisih yang
+      mengubah <code>actual_qty</code> &mdash; lewat <code>stock_adjustments</code> +
+      <code>STOCK_ADJUSTMENT</code>.
+    </p>
+
+    <dl class="ate">
+      <div><dt>Aktor</dt><dd>Anak Gudang (hitung) &middot; Admin Gudang (review)</dd></div>
+      <div><dt>Pemicu</dt><dd>Per item: <code>APPROVED</code> / <code>REJECTED</code> / <code>RECOUNT</code></dd></div>
+      <div><dt>Efek</dt><dd><code>APPROVED</code> + selisih &ne; 0 &rarr; <code>actual_qty = physical_qty</code></dd></div>
+    </dl>
+
+    <figure>
+      <div class="fig-card fig-scroll">
+        <svg viewBox="0 0 820 236" role="img" aria-label="Alur Stock Opname: SCHEDULED ke IN_PROGRESS ke SUBMITTED ke PENDING_REVIEW, lalu tiap item ke APPROVED yang membuat penyesuaian, REJECTED tanpa penyesuaian, atau RECOUNT yang kembali ke IN_PROGRESS">
+          <defs>
+            <marker id="arOp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+          </defs>
+          <g stroke="currentColor" stroke-opacity="0.85" fill="none" marker-end="url(#arOp)">
+            <line x1="132" y1="40" x2="176" y2="40" />
+            <line x1="300" y1="40" x2="344" y2="40" />
+            <line x1="452" y1="40" x2="496" y2="40" />
+            <line x1="612" y1="46" x2="652" y2="24" />
+            <line x1="612" y1="52" x2="652" y2="70" />
+            <line x1="612" y1="58" x2="652" y2="120" />
+          </g>
+          <g>
+            <rect x="26" y="22" width="106" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="79" y="44" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">SCHEDULED</text>
+            <rect x="176" y="22" width="124" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="238" y="44" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">IN_PROGRESS</text>
+            <rect x="344" y="22" width="108" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="398" y="44" text-anchor="middle" font-size="11" class="n-label" fill="currentColor">SUBMITTED</text>
+            <rect x="496" y="22" width="116" height="36" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.4" />
+            <text x="554" y="44" text-anchor="middle" font-size="10.5" class="n-label" fill="currentColor">PENDING_REVIEW</text>
+          </g>
+          <g fill="currentColor" fill-opacity="0.55" font-size="10" text-anchor="middle">
+            <text x="154" y="32">mulai</text>
+            <text x="322" y="32">input fisik</text>
+            <text x="474" y="32">&nbsp;</text>
+          </g>
+
+          <g style="color: var(--in)">
+            <rect x="652" y="8" width="150" height="34" rx="8" fill="color-mix(in srgb, var(--in) 12%, transparent)" stroke="currentColor" stroke-opacity="0.6" />
+            <text x="727" y="29" text-anchor="middle" font-size="10.5" class="n-label" fill="currentColor">APPROVED</text>
+          </g>
+          <g style="color: var(--mute)">
+            <rect x="652" y="54" width="150" height="32" rx="8" fill="var(--surface-2)" stroke="currentColor" stroke-opacity="0.5" />
+            <text x="727" y="74" text-anchor="middle" font-size="10.5" class="n-label" fill="currentColor">REJECTED</text>
+          </g>
+          <g style="color: var(--hold)">
+            <rect x="652" y="104" width="150" height="32" rx="8" fill="color-mix(in srgb, var(--hold) 12%, transparent)" stroke="currentColor" stroke-opacity="0.55" />
+            <text x="727" y="124" text-anchor="middle" font-size="10" class="n-label" fill="currentColor">RECOUNT_REQUIRED</text>
+          </g>
+          <!-- recount loop -->
+          <path d="M727,136 L727,180 L238,180 L238,60" fill="none" stroke="currentColor" stroke-opacity="0.4" stroke-dasharray="4 3" marker-end="url(#arOp)" />
+          <text x="470" y="174" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.55">hitung ulang baris tertentu</text>
+
+          <!-- adjustment effect -->
+          <g style="color: var(--in)">
+            <text x="652" y="206" font-size="10.5" font-family="'IBM Plex Mono', monospace" fill="currentColor">&darr; selisih &ne; 0</text>
+            <text x="652" y="223" font-size="10" fill="currentColor" fill-opacity="0.8">stock_adjustments + STOCK_ADJUSTMENT</text>
+          </g>
+        </svg>
+      </div>
+      <figcaption>
+        Syarat submit: semua <code>physical_qty</code> terisi; jika berbeda dari sistem, <code>note</code>
+        wajib. <code>REJECTED</code> menutup opname tanpa mengubah stok. <code>RECOUNT</code>
+        mengembalikan baris terkait ke penghitungan.
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="stage bleed" id="tracking">
+  <div class="stage-head">
+    <span class="stage-no">06</span>
+    <h2>Modul tracking</h2>
+  </div>
+  <div class="stage-body">
+    <p>
+      Tujuh modul melacak siklus hidup dokumen turunan. Modul ini <strong>tidak</strong> menggerakkan
+      stok sendiri &mdash; pergerakan tetap lewat NPBG (keluar) dan RI (masuk). Klasifikasi pada NPBG
+      menentukan modul mana yang dibuat/di-link.
+    </p>
+
+    <div class="track-grid">
+      <div class="track">
+        <h4>Lend</h4>
+        <p class="sub">Barang SIG dipinjamkan ke relasi / proyek</p>
+        <div class="flow">ON_LOAN &rarr; PARTIAL_RETURN &rarr; RETURNED<br />ON_LOAN &rarr; OVERDUE (lewat due_date)</div>
+        <div class="io"><span class="pill out">keluar: NPBG</span><span class="pill in">kembali: RI</span></div>
+      </div>
+      <div class="track">
+        <h4>Borrow</h4>
+        <p class="sub">SIG meminjam dari pihak luar</p>
+        <div class="flow">BORROWED &rarr; PARTIAL &rarr; RETURNED</div>
+        <div class="io"><span class="pill in">terima: catatan</span><span class="pill out">kembali: NPBG</span></div>
+      </div>
+      <div class="track">
+        <h4>STPP</h4>
+        <p class="sub">Alat ber-serial diserahkan ke divisi</p>
+        <div class="flow">ACTIVE &rarr; PASSIVE<br />PASSIVE &rarr; (serah lagi) ACTIVE</div>
+        <div class="io"><span class="pill out">keluar: NPBG</span><span class="pill in">tarik: RI</span></div>
+      </div>
+      <div class="track">
+        <h4>Ban Luar</h4>
+        <p class="sub">Penggantian ban kendaraan operasional</p>
+        <div class="flow">PENDING_RI &rarr; CLEAR<br />is_opening &rarr; langsung CLEAR</div>
+        <div class="io"><span class="pill out">ban baru: NPBG</span><span class="pill in">ban lama: RI</span></div>
+      </div>
+      <div class="track">
+        <h4>Maintenance</h4>
+        <p class="sub">SPK + sub-pekerjaan perbaikan aset</p>
+        <div class="flow">order: OPEN &rarr; ON_GOING &rarr; COMPLETED<br />sub: ON_GOING &rarr; COMPLETED</div>
+        <div class="io"><span class="pill out">spare part: NPBG</span></div>
+      </div>
+      <div class="track">
+        <h4>Manufaktur &amp; Assembly</h4>
+        <p class="sub">Perakitan internal / jasa vendor</p>
+        <div class="flow">REQUESTED &rarr; ON_GOING &rarr; COMPLETED</div>
+        <div class="io"><span class="pill out">material: NPBG</span><span class="pill in">produk jadi: RI</span></div>
+      </div>
+      <div class="track">
+        <h4>Pengembalian Bekas</h4>
+        <p class="sub">Sisa / bekas / rusak dari pemakaian</p>
+        <div class="flow">PENDING &rarr; CLEAR</div>
+        <div class="io"><span class="pill in">REUSABLE/USED &rarr; RI</span><span class="pill">SCRAP &rarr; buang</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="ref bleed" id="peran">
+  <h2>Peran &amp; hak akses</h2>
+  <p>
+    Backend adalah sumber kebenaran izin &mdash; dicek di middleware, tidak pernah percaya klien. Tiap
+    peran memiliki matriks slug permission (<code>app/Support/Rbac/Rbac.php</code>).
+  </p>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Peran</th><th>Tugas utama di alur</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">super_admin</td><td>Akses penuh &mdash; semua modul, master data, RBAC, settings.</td></tr>
+        <tr><td class="mono">admin_gudang</td><td>Review request, cek fisik, reserve, buat NPBG, buat PPB, isi <code>No NPBG</code>/<code>Nomor PPB</code>, jadwalkan &amp; setujui opname.</td></tr>
+        <tr><td class="mono">anak_gudang</td><td>Hitung fisik opname &amp; submit; lihat inventory &amp; pergerakan stok.</td></tr>
+        <tr><td class="mono">lapangan_gudang</td><td>Siapkan barang NPBG, tandai siap, proses pengambilan + tanda tangan.</td></tr>
+        <tr><td class="mono">purchasing</td><td>Review &amp; approve PPB, buat &amp; kirim PO, buat &amp; konfirmasi RI, kelola vendor.</td></tr>
+        <tr><td class="mono">bos</td><td>Lihat semua modul + dashboard eksekutif; approval bernilai besar.</td></tr>
+        <tr><td class="mono">karyawan</td><td>Buat &amp; lacak request sendiri, lihat NPBG sendiri, cari barang. Tidak bisa isi <code>No NPBG</code>/<code>Nomor PPB</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="ref bleed" id="gerak">
+  <h2>Event &rarr; pergerakan stok</h2>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Transisi</th><th>Movement</th><th>Arah</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Request &rarr; RESERVED</td><td class="mono">RESERVATION</td><td><span class="pill hold">reserved +</span></td></tr>
+        <tr><td>Request / NPBG &rarr; CANCELLED</td><td class="mono">RELEASE_RESERVATION</td><td><span class="pill hold">reserved &minus;</span></td></tr>
+        <tr><td>NPBG &rarr; PICKED_UP</td><td class="mono">STOCK_OUT</td><td><span class="pill out">actual &minus;</span></td></tr>
+        <tr><td>RI (PURCHASE) &rarr; CONFIRMED</td><td class="mono">RECEIVING</td><td><span class="pill in">actual +</span></td></tr>
+        <tr><td>RI (retur pinjam / STPP / bekas) &rarr; CONFIRMED</td><td class="mono">RETURN</td><td><span class="pill in">actual +</span></td></tr>
+        <tr><td>RI (MANUFACTURING_OUTPUT) &rarr; CONFIRMED</td><td class="mono">STOCK_IN</td><td><span class="pill in">actual +</span></td></tr>
+        <tr><td>Opname &rarr; APPROVED (&Delta; &ne; 0)</td><td class="mono">STOCK_ADJUSTMENT</td><td><span class="pill hold">actual &plusmn;</span></td></tr>
+        <tr><td>Transfer antar-gudang</td><td class="mono">TRANSFER_OUT + TRANSFER_IN</td><td><span class="pill">pindah</span></td></tr>
+        <tr><td>Migrasi / go-live</td><td class="mono">OPENING_BALANCE</td><td><span class="pill in">actual +</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="ref bleed" id="hitung">
+  <h2>Mesin hitung: safety stock &amp; prioritas</h2>
+  <p>
+    Semua di backend (<code>StockwiseEngine</code>). Frontend hanya menampilkan hasil.
+    <code>sisa_stok = available = actual &minus; reserved</code>.
+  </p>
+  <div class="formula">
+<span class="k">selisih</span>  = sisa_stok &minus; safety_stock<br /><br />
+<span class="k">status</span>:<br />
+&nbsp;&nbsp;sisa_stok == 0 <span class="c">dan</span> safety_stock == 0  &rarr; <b>BEP</b><br />
+&nbsp;&nbsp;selisih &ge; 0                        &rarr; <b>AMAN</b><br />
+&nbsp;&nbsp;selain itu                            &rarr; <b>TIDAK_AMAN</b><br /><br />
+<span class="k">deficit</span> = max(safety_stock &minus; sisa_stok, 0)<br /><br />
+<span class="k">priority_score</span> = <span class="c">// hanya bila TIDAK_AMAN</span><br />
+&nbsp;&nbsp;(deficit &times; 2.0) + (lead_time &times; 1.0)<br /><br />
+<span class="k">priority_level</span>:<br />
+&nbsp;&nbsp;AMAN / BEP                              &rarr; LOW<br />
+&nbsp;&nbsp;TIDAK_AMAN <span class="c">dan</span> (deficit &ge; median_deficit <span class="c">atau</span> lead_time &ge; threshold)  &rarr; HIGH<br />
+&nbsp;&nbsp;TIDAK_AMAN lainnya                      &rarr; MEDIUM
+  </div>
+  <p>
+    Parameter dataset dihitung ulang tiap malam &amp; setelah opname/penerimaan besar:
+    <code>lead_time_threshold = persentil-75</code> lead time item aktif (fallback 14), dan
+    <code>median_deficit</code> dari semua item <code>TIDAK_AMAN</code>. Saat membuat / mereview
+    request &amp; PPB: <code>projected_stock = available &minus; qty_diminta</code>, dan
+    <code>below_safety</code> bila <code>projected_stock &lt; safety_stock</code>.
+  </p>
+</section>
+
+<section class="ref bleed" id="nomor">
+  <h2>Penomoran dokumen</h2>
+  <p>
+    Format <code>&lt;DOK&gt;/&lt;PREFIX&gt;/&lt;YY&gt;/&lt;BULAN-ROMAWI&gt;/&lt;URUT-3&gt;</code>,
+    urut per (jenis dokumen, prefix, tahun, bulan), di-<em>lock</em> baris saat increment.
+  </p>
+  <div class="table-scroll">
+    <table>
+      <thead><tr><th>Dokumen</th><th>Contoh</th></tr></thead>
+      <tbody>
+        <tr><td>Material Request</td><td class="mono">REQ/SDA/26/IX/001</td></tr>
+        <tr><td>NPBG</td><td class="mono">NPBG/NA/26/IX/138</td></tr>
+        <tr><td>PPB</td><td class="mono">PPB/NA/26/IX/012</td></tr>
+        <tr><td>Purchase Order</td><td class="mono">PO/BL/26/IX/004</td></tr>
+        <tr><td>Receiving</td><td class="mono">RI/NV/26/IX/077</td></tr>
+        <tr><td>SPK Maintenance</td><td class="mono">SPK/SDA/26/IX/009</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="wrap">
+  <p>
+    <strong>Alur Operasi STOCKWISE</strong> &mdash; runbook internal PT Surya Inti Gas. Detail teknis
+    di <span class="mono">docs/status-flow.md</span>, <span class="mono">docs/business-process.md</span>,
+    <span class="mono">docs/calculation-engine.md</span>. Setiap transisi menulis
+    <span class="mono">audit_logs</span> dan memicu notifikasi terkait.
+  </p>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement
+    var btn = document.getElementById('themeBtn')
+    var KEY = 'stockwise-flow-theme'
+    try {
+      var saved = localStorage.getItem(KEY)
+      if (saved === 'dark' || saved === 'light') root.setAttribute('data-theme', saved)
+    } catch (e) {}
+    function current() {
+      var t = root.getAttribute('data-theme')
+      if (t) return t
+      return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+    }
+    btn.addEventListener('click', function () {
+      var next = current() === 'dark' ? 'light' : 'dark'
+      root.setAttribute('data-theme', next)
+      try {
+        localStorage.setItem(KEY, next)
+      } catch (e) {}
+    })
+  })()
+</script>
