@@ -42,7 +42,13 @@ export function PoDraftPage() {
     <div className="space-y-4">
       <BackLink to="/purchase-orders" label="Purchase Order" />
       <PageHeader title="Draft PO" icon={<Scale className="size-5" />}
-        subtitle="Barang dari PPB yang sudah disetujui Direktur. Catat harga dari beberapa vendor untuk dibandingkan, centang barang, lalu buat PO — satu PO untuk satu vendor." />
+        subtitle="Barang dari PPB yang sudah disetujui Direktur. Catat harga dari beberapa vendor untuk dibandingkan, centang barang, lalu buat PO — satu PO untuk satu vendor."
+        actions={
+          <Button size="sm" variant="outline" asChild>
+            <Link to="/purchase-orders/draft-harga">Draft Harga</Link>
+          </Button>
+        }
+      />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Input className="sm:w-80" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari barang / no. PPB / peminta / vendor" aria-label="Cari" />
         {data && <span className="text-xs text-muted-foreground">{data.meta.total} barang menunggu PO</span>}

@@ -16,6 +16,14 @@ export interface NavItem {
   /** other words the menu search finds it by */
   keywords?: string
   /** sub menus shown under it (a dropdown in the sidebar) */
+  children?: NavChild[]
+}
+
+export interface NavChild {
+  to: string
+  label: string
+  keywords?: string
+  permissions?: string[]
   children?: { to: string; label: string; keywords?: string; permissions?: string[] }[]
 }
 
@@ -44,13 +52,39 @@ export const NAV: NavGroup[] = [
       {
         to: '/item-requests', label: 'Item Request', icon: ClipboardList, permissions: ['item_request.create', 'item_request.view', ...APPROVAL_PERMISSIONS], keywords: 'permintaan barang',
         children: [
-          { to: '/item-requests', label: 'Request Barang', keywords: 'permintaan', permissions: ['item_request.create', 'item_request.view'] },
+          {
+            to: '/item-requests', label: 'Request Barang', keywords: 'permintaan', permissions: ['item_request.create', 'item_request.view'],
+            children: [
+              { to: '/item-requests', label: 'Dashboard', keywords: 'dashboard ringkasan', permissions: ['item_request.create', 'item_request.view'] },
+              { to: '/item-requests?status=DRAFT', label: 'List Req', keywords: 'list request', permissions: ['item_request.create', 'item_request.view'] },
+            ],
+          },
           { to: '/approvals', label: 'Approval', keywords: 'manager direktur serah terima', permissions: APPROVAL_PERMISSIONS },
           { to: '/npbg', label: 'NPBG', keywords: 'barang keluar pengeluaran', permissions: ['npbg.view'] },
-          { to: '/ppb', label: 'PPB', keywords: 'permintaan pembelian', permissions: ['ppb.view'] },
-          { to: '/purchase-orders', label: 'Purchase Order', keywords: 'po purchasing pembelian', permissions: ['po.view'] },
-          { to: '/purchase-orders/draft', label: 'Draft PO', keywords: 'draft po perbandingan harga vendor penawaran', permissions: ['po.create'] },
-          { to: '/ri', label: 'RI', keywords: 'penerimaan barang masuk', permissions: ['ri.view'] },
+          {
+            to: '/ppb', label: 'PPB', keywords: 'permintaan pembelian', permissions: ['ppb.view', 'ppb.create'],
+            children: [
+              { to: '/ppb', label: 'Dashboard', keywords: 'dashboard ringkasan', permissions: ['ppb.view'] },
+              { to: '/ppb?status=OPEN', label: 'List PPB', keywords: 'permintaan pembelian', permissions: ['ppb.view'] },
+              { to: '/ppb/drafts', label: 'Draft PPB', keywords: 'draft ppb perbandingan harga vendor penawaran', permissions: ['ppb.create'] },
+            ],
+          },
+          {
+            to: '/purchase-orders', label: 'Purchase Order', keywords: 'po purchasing pembelian', permissions: ['po.view', 'po.create'],
+            children: [
+              { to: '/purchase-orders', label: 'Dashboard', keywords: 'dashboard ringkasan', permissions: ['po.view'] },
+              { to: '/purchase-orders?status=OPEN', label: 'List PO', keywords: 'po purchasing pembelian', permissions: ['po.view'] },
+              { to: '/purchase-orders/draft', label: 'Draft PO', keywords: 'draft po perbandingan harga vendor penawaran', permissions: ['po.create'] },
+              { to: '/purchase-orders/draft-harga', label: 'Draft Harga', keywords: 'draft harga vendor penawaran', permissions: ['po.create'] },
+            ],
+          },
+          {
+            to: '/ri', label: 'RI', keywords: 'penerimaan barang masuk', permissions: ['ri.view'],
+            children: [
+              { to: '/ri', label: 'Dashboard', keywords: 'dashboard ringkasan', permissions: ['ri.view'] },
+              { to: '/ri?status=OPEN', label: 'List RI', keywords: 'list ri', permissions: ['ri.view'] },
+            ],
+          },
           { to: '/purchase-returns', label: 'Retur Pembelian', keywords: 'purchase return vendor', permissions: ['purchase_return.view'] },
           { to: '/stock-opnames', label: 'Stock Opname', keywords: 'so hitung fisik penyesuaian', permissions: ['opname.view'] },
           { to: '/stock-card', label: 'Kartu Stock', keywords: 'kartu stok proyek', permissions: ['item.view', 'inventory.view'] },
@@ -101,8 +135,9 @@ export const NAV: NavGroup[] = [
 /** Pages reached from another menu entry (detail / new pages, older paths). */
 const EXTRA: { prefix: string; parent: string; label: string }[] = [
   { prefix: '/purchase-returns/new', parent: '/item-requests', label: 'Buat retur' },
-  { prefix: '/ppb/drafts/', parent: '/item-requests', label: 'Draft PPB' },
-  { prefix: '/ppb/drafts', parent: '/item-requests', label: 'Draft PPB' },
+  { prefix: '/ppb/drafts/', parent: '/ppb', label: 'Draft PPB' },
+  { prefix: '/ppb/drafts', parent: '/ppb', label: 'Draft PPB' },
+  { prefix: '/purchase-orders/draft', parent: '/purchase-orders', label: 'Draft PO' },
   { prefix: '/stock-card/project', parent: '/item-requests', label: 'Proyek' },
   { prefix: '/safety-stocks', parent: '/items', label: 'Safety Stock' },
   { prefix: '/sync/', parent: '/sync/history', label: 'Detail' },

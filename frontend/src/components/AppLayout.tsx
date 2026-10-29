@@ -136,10 +136,13 @@ export function AppLayout() {
   const important = useIrSummary(hasPermission('important_request.access'))
   const badges = { approvals: approvals.data ?? 0, important: important.data?.badge ?? 0 }
   const groups = visibleNav(hasPermission)
-  // sub menus: open on their own page, or when toggled
+  // sub menus: open on their own page, or when toggled (supports nested levels)
   const [openSubs, setOpenSubs] = useState<Record<string, boolean>>({})
-  const subOpen = (to: string, children?: { to: string }[]) => openSubs[to]
-    ?? (location.pathname.startsWith(to) || !!children?.some((c) => location.pathname.startsWith(c.to.split('?')[0])))
+  const subOpen = (to: string, children?: { to: string; children?: { to: string }[] }[]) => openSubs[to]
+    ?? (location.pathname.startsWith(to) || !!children?.some((c) => {
+      const cPath = c.to.split('?')[0]
+      return location.pathname.startsWith(cPath) || (c.children && c.children.some((gc) => location.pathname.startsWith(gc.to.split('?')[0])))
+    }))
 
   const sidebar = (
     <nav className="flex h-full flex-col gap-5 overflow-y-auto overscroll-contain px-3 py-4" aria-label="Menu utama">
@@ -177,12 +180,42 @@ export function AppLayout() {
               {n.children && subOpen(n.to, n.children) && (
                 <div className="ml-5 mt-0.5 space-y-0.5 border-l pl-2">
                   {n.children.map((c) => {
+                    const hasChildren = c.children && c.children.length > 0
                     const on = location.pathname + location.search === c.to
+                    const cOpen = subOpen(c.to, c.children)
                     return (
-                      <Link key={c.to} to={c.to} onClick={() => setMobileOpen(false)}
-                        className={cn('block rounded-md px-3 py-1.5 text-sm transition-colors', on ? 'bg-primary/10 font-medium text-primary' : 'text-sidebar-foreground hover:bg-muted hover:text-foreground')}>
-                        {c.label}
-                      </Link>
+                      <div key={c.to} className="relative">
+                        <div className="flex items-center gap-2">
+                          <Link to={c.to} onClick={() => setMobileOpen(false)}
+                            className={cn('flex-1 rounded-md px-3 py-1.5 text-sm transition-colors', on ? 'bg-primary/10 font-medium text-primary' : 'text-sidebar-foreground hover:bg-muted hover:text-foreground')}>
+                            {c.label}
+                          </Link>
+                          {hasChildren && (
+                            <button
+                              type="button"
+                              onClick={() => setOpenSubs((o) => ({ ...o, [c.to]: !cOpen }))}
+                              className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                              aria-label={cOpen ? `Tutup sub menu ${c.label}` : `Buka sub menu ${c.label}`}
+                              aria-expanded={cOpen}
+                            >
+                              <ChevronDown className={cn('size-3 transition-transform', cOpen && 'rotate-180')} />
+                            </button>
+                          )}
+                        </div>
+                        {hasChildren && cOpen && (
+                          <div className="ml-4 mt-0.5 space-y-0.5 border-l pl-2">
+                            {c.children!.map((gc) => {
+                              const gcOn = location.pathname + location.search === gc.to
+                              return (
+                                <Link key={gc.to} to={gc.to} onClick={() => setMobileOpen(false)}
+                                  className={cn('block rounded-md px-3 py-1.5 text-sm transition-colors', gcOn ? 'bg-primary/10 font-medium text-primary' : 'text-sidebar-foreground hover:bg-muted hover:text-foreground')}>
+                                  {gc.label}
+                                </Link>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     )
                   })}
                 </div>
