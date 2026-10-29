@@ -101,6 +101,7 @@ class ItemRequestService
                     'item_id' => $item?->id,
                     'kode_barang' => $item?->code ?? ($line['kode_barang'] ?? null),
                     'deskripsi_barang' => $line['deskripsi_barang'],
+                    'deskripsi_peminta' => $line['deskripsi_barang'],
                     'qty' => $line['qty'],
                     'satuan' => $line['satuan'] ?? $item?->unit?->code,
                     'note' => $line['note'] ?? null,

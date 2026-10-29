@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertTriangle, Ban, CalendarClock, Check, CheckCircle2, ClipboardList, CornerDownRight, Loader2, MessageSquare, Pencil, Play, RotateCcw, Send, ShieldAlert, Trash2, Undo2, Upload,
+  AlertTriangle, Ban, CalendarClock, Check, CheckCircle2, ClipboardList, Clock, CornerDownRight, Loader2, MessageSquare, Pencil, Play, RotateCcw, Send, ShieldAlert, Trash2, Undo2, Upload,
 } from 'lucide-react'
 import {
-  useDeleteIr, useIr, useIrAct, useIrActivities, useIrAddFiles, useIrCancel, useIrComment, useIrComments, useIrDeadline, useIrDeleteComment, useIrDeleteFile,
+  useDeleteIr, useIr, useIrAct, useIrAddFiles, useIrCancel, useIrComment, useIrComments, useIrDeadline, useIrDeleteComment, useIrDeleteFile,
   useIrEditComment, useIrReopen, useIrReview, useSendIr, type IrComment, type IrDetail, type IrFile,
 } from '@/features/importantRequests/api'
 import { IrDeadline, IrFileList, IrFilePicker, IrPriorityBadge, IrStatusBadge, fmtDateTime, readyTokens, type PickedFile } from '@/components/importantRequests/IrParts'
@@ -20,7 +20,7 @@ import { apiErrorMessage } from '@/lib/api'
 import { invalidTo, toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
-type Tab = 'overview' | 'files' | 'discussion' | 'review' | 'activity'
+type Tab = 'overview' | 'discussion' | 'review'
 
 /** A mutation call with the app's popups: 😊 on success, 😆 / 😢 on an error. */
 function run<T>(m: { mutateAsync: (b: T) => Promise<unknown> }, body: T, ok: string, after?: () => void) {
@@ -52,7 +52,7 @@ function ReasonDialog({ open, title, label, withDate, dateLabel, required = true
   )
 }
 
-/** What I can do now on this request: as its recipient, and as its maker. */
+/** What I can do now on this request: simplified action bar with grouped primary and secondary actions. */
 function ActionBar({ r, onTab }: { r: IrDetail; onTab: (t: Tab) => void }) {
   const navigate = useNavigate()
   const act = useIrAct(r.id)
@@ -61,37 +61,87 @@ function ActionBar({ r, onTab }: { r: IrDetail; onTab: (t: Tab) => void }) {
   const deadline = useIrDeadline(r.id)
   const cancel = useIrCancel(r.id)
   const reopen = useIrReopen(r.id)
-  const [dialog, setDialog] = useState<null | 'blocker' | 'extension' | 'deadline' | 'cancel' | 'reopen' | 'progress'>(null)
+  const [dialog, setDialog] = useState<null | 'blocker' | 'extension' | 'deadline' | 'cancel' | 'reopen' | 'progress' | 'more'>(null)
   const [progress, setProgress] = useState(r.me.assignee?.progress ?? 0)
   const [progressNote, setProgressNote] = useState('')
   const mine = r.me.assignee
   const open = !['SELESAI', 'DIBATALKAN', 'DRAFT'].includes(r.status)
   const close = () => setDialog(null)
 
-  const buttons: React.ReactNode[] = []
+  // Primary action - the most important one
+  let primaryAction: React.ReactNode = null
   if (mine && open) {
-    if (mine.status === 'MENUNGGU_KONFIRMASI') buttons.push(<Button key="c" onClick={() => run(act, { action: 'confirm' }, 'Tugas dikonfirmasi.')}><Check className="size-4" /> Konfirmasi terima tugas</Button>)
-    if (['DITERIMA', 'REVISI', 'TERKENDALA'].includes(mine.status)) buttons.push(<Button key="s" variant={mine.status === 'DITERIMA' ? 'default' : 'outline'} onClick={() => run(act, { action: 'start' }, mine.status === 'TERKENDALA' ? 'Pekerjaan dilanjutkan.' : 'Pekerjaan dimulai.')}><Play className="size-4" /> {mine.status === 'TERKENDALA' ? 'Kendala teratasi, lanjutkan' : mine.status === 'REVISI' ? 'Mulai revisi' : 'Mulai kerjakan'}</Button>)
-    if (['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status)) {
-      buttons.push(<Button key="p" variant="outline" onClick={() => setDialog('progress')}>Update progres</Button>)
-      buttons.push(<Button key="sub" onClick={() => onTab('review')}><Upload className="size-4" /> Kirim hasil</Button>)
-      buttons.push(<Button key="b" variant="outline" className="border-red-300 text-red-700 hover:bg-red-50" onClick={() => setDialog('blocker')}><ShieldAlert className="size-4" /> Laporkan kendala</Button>)
-    }
-    if (['DITERIMA', 'IN_PROGRESS', 'REVISI', 'TERKENDALA'].includes(mine.status)) buttons.push(<Button key="e" variant="ghost" onClick={() => setDialog('extension')}><CalendarClock className="size-4" /> Ajukan perpanjangan</Button>)
+    if (mine.status === 'MENUNGGU_KONFIRMASI') primaryAction = <Button onClick={() => run(act, { action: 'confirm' }, 'Tugas dikonfirmasi.')}><Check className="size-4" /> Terima tugas</Button>
+    else if (['DITERIMA', 'REVISI', 'TERKENDALA'].includes(mine.status)) primaryAction = <Button onClick={() => run(act, { action: 'start' }, mine.status === 'TERKENDALA' ? 'Pekerjaan dilanjutkan.' : 'Pekerjaan dimulai.')}><Play className="size-4" /> {mine.status === 'TERKENDALA' ? 'Lanjutkan' : mine.status === 'REVISI' ? 'Mulai revisi' : 'Mulai kerjakan'}</Button>
+    else if (['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status)) primaryAction = <Button onClick={() => onTab('review')}><Upload className="size-4" /> Kirim hasil</Button>
+  } else if (r.me.is_creator && r.me.can_send) {
+    primaryAction = <Button onClick={async () => { if (await confirmDialog({ title: 'Kirim request?', message: `${r.number} dikirim ke ${r.assignees.length} penerima.`, confirmLabel: 'Kirim' })) run(send, undefined, 'Request dikirim.') }}><Send className="size-4" /> Kirim</Button>
   }
-  if (r.me.is_creator) {
-    if (r.me.can_send) buttons.push(<Button key="send" onClick={async () => { if (await confirmDialog({ title: 'Kirim request?', message: `${r.number} dikirim ke ${r.assignees.length} penerima.`, confirmLabel: 'Kirim' })) run(send, undefined, 'Request dikirim.') }}><Send className="size-4" /> Kirim</Button>)
-    if (r.me.can_edit) buttons.push(<Button key="edit" variant="outline" onClick={() => navigate(`/important-requests/${r.id}/ubah`)}><Pencil className="size-4" /> Ubah</Button>)
-    if (r.me.can_cancel) buttons.push(<Button key="dl" variant="outline" onClick={() => setDialog('deadline')}><CalendarClock className="size-4" /> Ubah deadline</Button>)
-    if (r.me.can_cancel) buttons.push(<Button key="cancel" variant="ghost" className="text-red-700 hover:text-red-800" onClick={() => setDialog('cancel')}><Ban className="size-4" /> Batalkan</Button>)
-    if (r.me.can_delete) buttons.push(<Button key="del" variant="ghost" className="text-red-700" onClick={async () => { if (await confirmDialog({ message: 'Hapus draft ini?', danger: true })) run(del, undefined, 'Draft dihapus.', () => navigate('/important-requests/saya')) }}><Trash2 className="size-4" /> Hapus draft</Button>)
-  }
-  if (r.me.can_reopen) buttons.push(<Button key="reopen" variant="outline" onClick={() => setDialog('reopen')}><RotateCcw className="size-4" /> Buka kembali</Button>)
-  if (buttons.length === 0) return null
+
+  // Count secondary actions
+  const hasSecondary = (mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI', 'TERKENDALA'].includes(mine.status)) ||
+    (r.me.is_creator && (r.me.can_edit || r.me.can_cancel || r.me.can_delete)) ||
+    r.me.can_reopen
+
+  if (!primaryAction && !hasSecondary) return null
 
   return (
-    <Card className="flex flex-wrap items-center gap-2 border-primary/30 bg-primary/5 p-3">
-      {buttons}
+    <>
+      <Card className="flex flex-wrap items-center gap-3 border-primary/20 bg-primary/5 p-4">
+        {primaryAction}
+        {hasSecondary && (
+          <Button variant="outline" onClick={() => setDialog('more')}>
+            Lebih banyak
+          </Button>
+        )}
+      </Card>
+
+      {/* More actions modal */}
+      <Modal open={dialog === 'more'} onClose={close} title="Tindakan lainnya" className="max-w-md">
+        <div className="space-y-2">
+          {mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status) && (
+            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('progress') }}>
+              <Clock className="mr-2 size-4" /> Update progres
+            </Button>
+          )}
+          {mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status) && (
+            <Button variant="outline" className="w-full justify-start border-red-300 text-red-700 hover:bg-red-50" onClick={() => { close(); setDialog('blocker') }}>
+              <ShieldAlert className="mr-2 size-4" /> Laporkan kendala
+            </Button>
+          )}
+          {mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI', 'TERKENDALA'].includes(mine.status) && (
+            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('extension') }}>
+              <CalendarClock className="mr-2 size-4" /> Ajukan perpanjangan deadline
+            </Button>
+          )}
+          {r.me.is_creator && r.me.can_edit && (
+            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); navigate(`/important-requests/${r.id}/ubah`) }}>
+              <Pencil className="mr-2 size-4" /> Ubah request
+            </Button>
+          )}
+          {r.me.is_creator && r.me.can_cancel && (
+            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('deadline') }}>
+              <CalendarClock className="mr-2 size-4" /> Ubah deadline
+            </Button>
+          )}
+          {r.me.is_creator && r.me.can_cancel && (
+            <Button variant="outline" className="w-full justify-start text-red-700 hover:text-red-800" onClick={() => { close(); setDialog('cancel') }}>
+              <Ban className="mr-2 size-4" /> Batalkan request
+            </Button>
+          )}
+          {r.me.is_creator && r.me.can_delete && (
+            <Button variant="outline" className="w-full justify-start text-red-700" onClick={async () => { close(); if (await confirmDialog({ message: 'Hapus draft ini?', danger: true })) run(del, undefined, 'Draft dihapus.', () => navigate('/important-requests/saya')) }}>
+              <Trash2 className="mr-2 size-4" /> Hapus draft
+            </Button>
+          )}
+          {r.me.can_reopen && (
+            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('reopen') }}>
+              <RotateCcw className="mr-2 size-4" /> Buka kembali
+            </Button>
+          )}
+        </div>
+      </Modal>
+
       <ReasonDialog open={dialog === 'blocker'} title="Laporkan kendala" label="Kendalanya" withDate={false} confirm="Laporkan" busy={act.isPending} onClose={close}
         onSubmit={(reason) => run(act, { action: 'blocker', reason }, 'Kendala dilaporkan.', close)} />
       <ReasonDialog open={dialog === 'extension'} title="Ajukan perpanjangan deadline" label="Alasan" withDate dateLabel="Deadline yang diusulkan" confirm="Ajukan" busy={act.isPending} onClose={close}
@@ -109,25 +159,32 @@ function ActionBar({ r, onTab }: { r: IrDetail; onTab: (t: Tab) => void }) {
           <Textarea rows={3} value={progressNote} maxLength={5000} onChange={(e) => setProgressNote(e.target.value)} placeholder="Catatan progres (opsional), tampil di diskusi" />
         </div>
       </Modal>
-    </Card>
+    </>
   )
 }
 
 function Overview({ r }: { r: IrDetail }) {
+  const add = useIrAddFiles(r.id)
+  const del = useIrDeleteFile(r.id)
+  const [files, setFiles] = useState<PickedFile[]>([])
+  const remove = async (f: IrFile) => { if (await confirmDialog({ message: `Hapus ${f.name}?`, danger: true })) run(del, f.id, 'File dihapus.') }
+  const subFiles = r.submissions.flatMap((s) => s.files)
+
   return (
     <div className="space-y-4">
-      <Card className="space-y-3 p-4">
+      <Card className="space-y-4 p-4 sm:p-5">
         <div className="whitespace-pre-wrap text-sm leading-relaxed">{r.description}</div>
-        {r.note && <div className="rounded-md bg-muted/50 px-3 py-2 text-sm"><span className="text-muted-foreground">Catatan: </span>{r.note}</div>}
         {r.cancel_reason && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">Dibatalkan: {r.cancel_reason}</div>}
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3 text-sm sm:grid-cols-4">
-          {([['Dari', r.creator], ['Kategori', r.category ?? '-'], ['Persetujuan', r.requires_approval ? 'Wajib disetujui' : 'Tanpa persetujuan'],
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-4 text-sm sm:grid-cols-4">
+          {([['Dari', r.creator],
             ['Jenis', r.assignees.length > 1 ? (r.assignment_mode === 'COLLECTIVE' ? 'Tugas bersama' : 'Tugas individu') : '-'],
             ['Dikirim', fmtDateTime(r.sent_at)], ['Selesai', fmtDateTime(r.completed_at)]] as [string, React.ReactNode][]).map(([k, v]) => (
             <div key={k}><dt className="text-xs text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>
           ))}
         </dl>
       </Card>
+
+      {/* Assignees */}
       <Card className="overflow-hidden">
         <div className="border-b px-4 py-3 text-sm font-semibold">Penerima ({r.assignees.length})</div>
         <ul className="divide-y">
@@ -142,36 +199,36 @@ function Overview({ r }: { r: IrDetail }) {
           ))}
         </ul>
       </Card>
+
+      {/* Files - moved inline instead of separate tab */}
+      {(r.attachments.length > 0 || subFiles.length > 0 || r.me.can_edit) && (
+        <Card className="space-y-4 p-4 sm:p-5">
+          <h3 className="text-sm font-semibold">Lampiran</h3>
+          {r.attachments.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">File awal (dari pembuat request)</div>
+              <IrFileList requestId={r.id} files={r.attachments} empty="Tidak ada file awal." onDelete={r.me.can_edit ? remove : undefined} />
+            </div>
+          )}
+          {subFiles.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">File hasil & revisi</div>
+              <IrFileList requestId={r.id} files={subFiles} empty="Belum ada file hasil." />
+            </div>
+          )}
+          {r.me.can_edit && (
+            <div className="space-y-2 pt-2">
+              <IrFilePicker files={files} onChange={setFiles} maxMb={r.me.max_mb} label="Tambah file awal" />
+              {files.length > 0 && <Button size="sm" disabled={add.isPending} onClick={() => { const t = readyTokens(files); if (!t) return toast.invalid('Tunggu upload selesai.'); run(add, { attachments: t }, 'File ditambahkan.', () => setFiles([])) }}>Simpan file</Button>}
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   )
 }
 
-function FilesTab({ r }: { r: IrDetail }) {
-  const add = useIrAddFiles(r.id)
-  const del = useIrDeleteFile(r.id)
-  const [files, setFiles] = useState<PickedFile[]>([])
-  const remove = async (f: IrFile) => { if (await confirmDialog({ message: `Hapus ${f.name}?`, danger: true })) run(del, f.id, 'File dihapus.') }
-  const subFiles = r.submissions.flatMap((s) => s.files)
-  return (
-    <div className="space-y-5">
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">File awal (dari pembuat request)</h3>
-        <IrFileList requestId={r.id} files={r.attachments} empty="Tidak ada file awal." onDelete={r.me.can_edit ? remove : undefined} />
-        {r.me.can_edit && (
-          <div className="space-y-2">
-            <IrFilePicker files={files} onChange={setFiles} maxMb={r.me.max_mb} label="Tambah file awal" />
-            {files.length > 0 && <Button size="sm" disabled={add.isPending} onClick={() => { const t = readyTokens(files); if (!t) return toast.invalid('Tunggu upload selesai.'); run(add, { attachments: t }, 'File ditambahkan.', () => setFiles([])) }}>Simpan file</Button>}
-          </div>
-        )}
-      </section>
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">File hasil & revisi</h3>
-        <IrFileList requestId={r.id} files={subFiles} empty="Belum ada file hasil." />
-      </section>
-      <p className="text-xs text-muted-foreground">File dari diskusi ada di tab Diskusi, di komentarnya masing-masing.</p>
-    </div>
-  )
-}
+
 
 function CommentItem({ r, c, onReply }: { r: IrDetail; c: IrComment; onReply?: () => void }) {
   const edit = useIrEditComment(r.id)
@@ -232,13 +289,13 @@ function DiscussionTab({ r }: { r: IrDetail }) {
   const [replyTo, setReplyTo] = useState<number | null>(null)
   return (
     <div className="space-y-4">
-      {r.me.can_comment ? <Card className="p-3"><Composer r={r} placeholder="Tulis komentar, update, atau pertanyaan. Sebut orang dengan @username." /></Card>
+      {r.me.can_comment ? <Card className="p-4"><Composer r={r} placeholder="Tulis komentar, update, atau pertanyaan. Sebut orang dengan @username." /></Card>
         : <p className="text-sm text-muted-foreground">Diskusi dibuka setelah request dikirim.</p>}
       {isLoading && <p className="text-sm text-muted-foreground">Memuat diskusi…</p>}
-      {data && data.data.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Belum ada diskusi.</p>}
+      {data && data.data.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">Belum ada diskusi.</p>}
       <div className="space-y-3">
         {data?.data.map((c) => (
-          <Card key={c.id} className="space-y-2 p-3">
+          <Card key={c.id} className="space-y-2 p-4">
             <CommentItem r={r} c={c} onReply={() => setReplyTo(replyTo === c.id ? null : c.id)} />
             {(c.replies?.length ?? 0) > 0 && (
               <div className="ml-4 space-y-2 border-l-2 pl-3">
@@ -319,41 +376,7 @@ function ReviewTab({ r }: { r: IrDetail }) {
   )
 }
 
-const ACTION_LABEL: Record<string, string> = {
-  CREATED: 'Membuat request', SENT: 'Mengirim request', EDITED: 'Mengubah request', ASSIGNEES_CHANGED: 'Mengubah penerima', CONFIRMED: 'Mengonfirmasi penerimaan',
-  STARTED: 'Mulai mengerjakan', RESUMED: 'Melanjutkan (kendala teratasi)', PROGRESS: 'Update progres', BLOCKED: 'Melaporkan kendala', EXTENSION_REQUESTED: 'Mengajukan perpanjangan deadline',
-  SUBMITTED: 'Mengirim hasil', APPROVED: 'Menyetujui hasil', REVISION_REQUESTED: 'Meminta revisi', DEADLINE_CHANGED: 'Mengubah deadline', CANCELLED: 'Membatalkan request',
-  REOPENED: 'Membuka kembali', COMPLETED: 'Request selesai', OVERDUE: 'Melewati deadline', COMMENTED: 'Berkomentar', REPLIED: 'Membalas komentar',
-  COMMENT_EDITED: 'Mengubah komentar', COMMENT_DELETED: 'Menghapus komentar', FILE_UPLOADED: 'Mengunggah file', FILE_DELETED: 'Menghapus file',
-}
 
-function metaText(meta: Record<string, unknown> | null): string {
-  if (!meta) return ''
-  const parts: string[] = []
-  for (const [k, v] of Object.entries(meta)) {
-    if (v == null || v === '' || (Array.isArray(v) && v.length === 0) || ['komentar', 'sebelumnya', 'isi'].includes(k)) continue
-    if (k === 'perubahan' && typeof v === 'object') { parts.push(`mengubah ${Object.keys(v as object).join(', ')}`); continue }
-    const val = Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'ya' : 'tidak') : /^\d{4}-\d{2}-\d{2}T/.test(String(v)) ? fmtDateTime(String(v)) : String(v)
-    parts.push(`${k.replace(/_/g, ' ')}: ${val}`)
-  }
-  return parts.join(' · ')
-}
-
-function ActivityTab({ r }: { r: IrDetail }) {
-  const { data, isLoading } = useIrActivities(r.id, true)
-  if (isLoading) return <p className="text-sm text-muted-foreground">Memuat riwayat…</p>
-  return (
-    <ol className="relative space-y-3 border-l pl-5">
-      {(data ?? []).map((a) => (
-        <li key={a.id} className="text-sm">
-          <span className="absolute -left-1.5 mt-1.5 size-3 rounded-full border-2 border-card bg-primary" />
-          <div><span className="font-medium">{a.user}</span> · {ACTION_LABEL[a.action] ?? a.action}</div>
-          <div className="text-xs text-muted-foreground">{fmtDateTime(a.created_at)}{metaText(a.meta) && ` · ${metaText(a.meta)}`}</div>
-        </li>
-      ))}
-    </ol>
-  )
-}
 
 /** Important Request detail: overview, files, discussion, results & review, activity. */
 export function IrDetailPage() {
@@ -364,8 +387,7 @@ export function IrDetailPage() {
   if (isLoading || !r) return <p className="py-16 text-center text-sm text-muted-foreground">Memuat…</p>
   const closed = ['SELESAI', 'DIBATALKAN', 'DRAFT'].includes(r.status)
   const pending = r.submissions.filter((s) => s.can_review).length
-  const tabs: [Tab, string, number?][] = [['overview', 'Ringkasan'], ['files', 'Lampiran', r.attachments.length + r.submissions.reduce((n, s) => n + s.files.length, 0)],
-    ['discussion', 'Diskusi', r.unread_comments], ['review', 'Hasil & Review', pending || r.submissions.length], ['activity', 'Riwayat']]
+  const tabs: [Tab, string, number?][] = [['overview', 'Ringkasan'], ['discussion', 'Diskusi', r.unread_comments], ['review', 'Hasil & Review', pending || r.submissions.length]]
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -394,10 +416,8 @@ export function IrDetailPage() {
       </div>
 
       {tab === 'overview' && <Overview r={r} />}
-      {tab === 'files' && <FilesTab r={r} />}
       {tab === 'discussion' && <DiscussionTab r={r} />}
       {tab === 'review' && <ReviewTab r={r} />}
-      {tab === 'activity' && <ActivityTab r={r} />}
       {r.me.is_creator && r.status === 'DRAFT' && <p className="text-xs text-muted-foreground">Draft: belum terlihat oleh penerima. <Link to={`/important-requests/${r.id}/ubah`} className="text-primary hover:underline">Lengkapi</Link> lalu kirim.</p>}
     </div>
   )

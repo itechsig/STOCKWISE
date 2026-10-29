@@ -412,6 +412,10 @@ Route::middleware('auth:sanctum')->group(function (): void {
         ->middleware('permission:master.employee.view')->name('api.employees.departments');
     Route::get('/employees/users', [\App\Http\Controllers\Api\EmployeeController::class, 'users'])
         ->middleware('permission:master.employee.manage')->name('api.employees.users');
+    Route::get('/employees/template', [\App\Http\Controllers\Api\EmployeeController::class, 'template'])
+        ->middleware('permission:master.employee.manage')->name('api.employees.template');
+    Route::post('/employees/import', [\App\Http\Controllers\Api\EmployeeController::class, 'import'])
+        ->middleware('permission:master.employee.manage')->name('api.employees.import');
     Route::post('/employees', [\App\Http\Controllers\Api\EmployeeController::class, 'store'])
         ->middleware('permission:master.employee.manage')->name('api.employees.store');
     Route::put('/employees/{employee}', [\App\Http\Controllers\Api\EmployeeController::class, 'update'])

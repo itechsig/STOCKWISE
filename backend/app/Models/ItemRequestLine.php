@@ -62,7 +62,8 @@ class ItemRequestLine extends Model
         return $this->fill([
             'item_id' => $item->id, 'kode_barang' => $item->code,
             'deskripsi_peminta' => $this->deskripsi_peminta ?? $this->deskripsi_barang,
-            'deskripsi_barang' => mb_substr((string) $item->description, 0, 400),
+            // Keep the original requester's description - don't change it to database name
+            'deskripsi_barang' => $this->deskripsi_peminta ?? $this->deskripsi_barang,
             'satuan' => $item->unit?->code ?: $this->satuan,
         ]);
     }

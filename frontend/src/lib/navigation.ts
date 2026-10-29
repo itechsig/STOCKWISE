@@ -1,6 +1,6 @@
 import {
-  ArrowLeftRight, BarChart3, BookOpenCheck, Boxes, ClipboardCheck, ClipboardList, ClipboardPen, FileSpreadsheet, FileStack, Handshake, History,
-  LayoutDashboard, type LucideIcon, Package, PackageCheck, Receipt, Recycle, ShieldHalf, ShoppingCart, Truck, Undo2, Users, Wifi, Wrench,
+  ClipboardList, ClipboardPen, Handshake, History,
+  LayoutDashboard, type LucideIcon, Package, ShieldHalf,
 } from 'lucide-react'
 
 /** One menu entry: the sidebar, the breadcrumb and the menu search all read this. */
@@ -29,100 +29,85 @@ const APPROVAL_PERMISSIONS = ['item_request.approve_manager', 'item_request.appr
 export const NAV: NavGroup[] = [
   {
     label: null,
-    items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard, keywords: 'beranda ringkasan' }],
-  },
-  {
-    // Important Request: work instructions, tasks and their follow-up (its own module, not inventory)
-    label: 'Important Request',
     items: [
+      { to: '/', label: 'Dashboard', icon: LayoutDashboard, keywords: 'beranda ringkasan' },
       {
-        to: '/important-requests', label: 'Important Request', icon: ClipboardPen, permissions: ['important_request.access'], badge: 'important',
-        keywords: 'instruksi tugas perintah kerja direktur atasan',
+        to: '/important-requests', label: 'Important Request', icon: ClipboardPen, permissions: ['important_request.access'], badge: 'important', keywords: 'instruksi tugas perintah kerja direktur atasan',
         children: [
+          { to: '/important-requests', label: 'Dashboard', keywords: 'ringkasan', permissions: ['important_request.access'] },
           { to: '/important-requests/saya', label: 'Permintaan Saya', keywords: 'request saya buat', permissions: ['important_request.create'] },
-          { to: '/important-requests/tugas', label: 'Tugas Saya', keywords: 'tugas ditugaskan' },
+          { to: '/important-requests/tugas', label: 'Tugas Saya', keywords: 'tugas ditugaskan', permissions: ['important_request.access'] },
           { to: '/important-requests/persetujuan', label: 'Perlu Persetujuan', keywords: 'review hasil approve', permissions: ['important_request.create'] },
-          { to: '/important-requests/selesai', label: 'Selesai', keywords: 'selesai arsip' },
+          { to: '/important-requests/selesai', label: 'Selesai', keywords: 'selesai arsip', permissions: ['important_request.access'] },
         ],
       },
-    ],
-  },
-  {
-    // "Item Request" = the former Operasional Gudang + Pengadaan groups, one group
-    label: 'Item Request',
-    items: [
-      { to: '/item-requests', label: 'Request Barang', icon: ClipboardList, permissions: ['item_request.create', 'item_request.view'], keywords: 'permintaan' },
-      { to: '/approvals', label: 'Approval', icon: ClipboardCheck, permissions: APPROVAL_PERMISSIONS, badge: 'approvals', keywords: 'manager direktur serah terima' },
-      { to: '/npbg', label: 'NPBG', icon: FileStack, permissions: ['npbg.view'], keywords: 'barang keluar pengeluaran' },
-      { to: '/ppb', label: 'PPB', icon: FileStack, permissions: ['ppb.view'], keywords: 'permintaan pembelian' },
-      { to: '/purchase-orders', label: 'Purchase Order', icon: ShoppingCart, permissions: ['po.view'], keywords: 'po purchasing pembelian' },
-      { to: '/ri', label: 'RI', icon: Receipt, permissions: ['ri.view'], keywords: 'penerimaan barang masuk' },
-      { to: '/purchase-returns', label: 'Retur Pembelian', icon: Undo2, permissions: ['purchase_return.view'], keywords: 'purchase return vendor' },
-      { to: '/stock-opnames', label: 'Stock Opname', icon: PackageCheck, permissions: ['opname.view'], keywords: 'so hitung fisik penyesuaian' },
-      { to: '/stock-card', label: 'Kartu Stock', icon: BookOpenCheck, permissions: ['item.view', 'inventory.view'], keywords: 'kartu stok proyek' },
-    ],
-  },
-  {
-    label: 'Tracking & Analytic',
-    items: [
-      { to: '/lend', label: 'Peminjaman (Lend)', icon: Handshake, permissions: ['lend.view'] },
-      { to: '/borrow', label: 'Pinjam Luar (Borrow)', icon: ArrowLeftRight, permissions: ['borrow.view'] },
-      { to: '/stpp', label: 'STPP', icon: Package, permissions: ['stpp.view'] },
-      { to: '/tyre-changes', label: 'Ban Luar', icon: Truck, permissions: ['tyre.view'], keywords: 'tyre' },
-      { to: '/maintenance', label: 'Maintenance', icon: Wrench, permissions: ['maintenance.view'] },
-      { to: '/manufacturing', label: 'Manufaktur & Assembly', icon: Boxes, permissions: ['manufacturing.view'] },
-      { to: '/used-returns', label: 'Pengembalian Bekas', icon: Recycle, permissions: ['used_return.view'] },
-      { to: '/analytics/important-requests', label: 'Analitik Important Request', icon: BarChart3, permissions: ['important_request.analytics'], keywords: 'analitik instruksi tugas kinerja' },
-    ],
-  },
-  {
-    label: 'Data & Laporan',
-    items: [
       {
-        // Master Data: Barang, Jasa (Master Produk) and Vendor & Supplier
-        to: '/items', label: 'Master Data', icon: Package, permissions: ['item.view', 'master.vendor.view', 'master.employee.view'], selfPermissions: ['item.view'], keywords: 'master data barang item produk stok persediaan',
+        to: '/item-requests', label: 'Item Request', icon: ClipboardList, permissions: ['item_request.create', 'item_request.view', ...APPROVAL_PERMISSIONS], keywords: 'permintaan barang',
+        children: [
+          { to: '/item-requests', label: 'Request Barang', keywords: 'permintaan', permissions: ['item_request.create', 'item_request.view'] },
+          { to: '/approvals', label: 'Approval', keywords: 'manager direktur serah terima', permissions: APPROVAL_PERMISSIONS },
+          { to: '/npbg', label: 'NPBG', keywords: 'barang keluar pengeluaran', permissions: ['npbg.view'] },
+          { to: '/ppb', label: 'PPB', keywords: 'permintaan pembelian', permissions: ['ppb.view'] },
+          { to: '/purchase-orders', label: 'Purchase Order', keywords: 'po purchasing pembelian', permissions: ['po.view'] },
+          { to: '/ri', label: 'RI', keywords: 'penerimaan barang masuk', permissions: ['ri.view'] },
+          { to: '/purchase-returns', label: 'Retur Pembelian', keywords: 'purchase return vendor', permissions: ['purchase_return.view'] },
+          { to: '/stock-opnames', label: 'Stock Opname', keywords: 'so hitung fisik penyesuaian', permissions: ['opname.view'] },
+          { to: '/stock-card', label: 'Kartu Stock', keywords: 'kartu stok proyek', permissions: ['item.view', 'inventory.view'] },
+        ],
+      },
+      {
+        to: '/lend', label: 'Tracking & Analytic', icon: Handshake, permissions: ['lend.view', 'borrow.view', 'stpp.view', 'tyre.view', 'maintenance.view', 'manufacturing.view', 'used_return.view', 'important_request.analytics'], keywords: 'tracking analytic',
+        children: [
+          { to: '/lend', label: 'Peminjaman (Lend)', permissions: ['lend.view'] },
+          { to: '/borrow', label: 'Pinjam Luar (Borrow)', permissions: ['borrow.view'] },
+          { to: '/stpp', label: 'STPP', permissions: ['stpp.view'] },
+          { to: '/tyre-changes', label: 'Ban Luar', keywords: 'tyre', permissions: ['tyre.view'] },
+          { to: '/maintenance', label: 'Maintenance', permissions: ['maintenance.view'] },
+          { to: '/manufacturing', label: 'Manufaktur & Assembly', permissions: ['manufacturing.view'] },
+          { to: '/used-returns', label: 'Pengembalian Bekas', permissions: ['used_return.view'] },
+          { to: '/analytics/important-requests', label: 'Analitik Important Request', keywords: 'analitik instruksi tugas kinerja', permissions: ['important_request.analytics'] },
+        ],
+      },
+      {
+        to: '/items', label: 'Data & Laporan', icon: Package, permissions: ['item.view', 'master.vendor.view', 'master.employee.view', 'inventory.view_analysis', 'item.safety_stock.view', 'report.inventory', 'report.request', 'report.npbg', 'report.ppb', 'report.ri', 'report.opname', 'report.stock_movement'], keywords: 'data laporan',
         children: [
           { to: '/items?kind=BARANG', label: 'Barang', keywords: 'master barang stok produk', permissions: ['item.view'] },
           { to: '/items?kind=JASA', label: 'Jasa', keywords: 'master jasa servis layanan', permissions: ['item.view'] },
           { to: '/vendors', label: 'Vendor & Supplier', keywords: 'master vendor supplier pemasok', permissions: ['master.vendor.view'] },
           { to: '/employees', label: 'Data Pekerja', keywords: 'master pekerja karyawan pegawai roster', permissions: ['master.employee.view'] },
+          { to: '/inventory/analysis', label: 'Analisis & Safety Stock', keywords: 'persediaan inventory', permissions: ['inventory.view_analysis', 'item.safety_stock.view'] },
+          { to: '/reports', label: 'Laporan & Export', permissions: ['report.inventory', 'report.request', 'report.npbg', 'report.ppb', 'report.ri', 'report.opname', 'report.stock_movement'] },
         ],
       },
-      { to: '/inventory/analysis', label: 'Analisis & Safety Stock', icon: Boxes, permissions: ['inventory.view_analysis', 'item.safety_stock.view'], keywords: 'persediaan inventory' },
-      { to: '/reports', label: 'Laporan & Export', icon: FileSpreadsheet, permissions: ['report.inventory', 'report.request', 'report.npbg', 'report.ppb', 'report.ri', 'report.opname', 'report.stock_movement'] },
-    ],
-  },
-  {
-    label: 'Integrasi Accurate',
-    items: [
-      { to: '/sync/history', label: 'Sinkron & Log Accurate', icon: History, permissions: ['sync.accurate.view'], keywords: 'sync audit log' },
-      { to: '/accurate/online', label: 'Accurate Online', icon: Wifi, permissions: ['accurate.session.view'] },
-    ],
-  },
-  {
-    label: 'Pengaturan',
-    items: [
-      { to: '/settings/users', label: 'Pengguna', icon: Users, permissions: ['user.view'], keywords: 'user akun' },
-      { to: '/settings/roles', label: 'Role & Hak Akses', icon: ShieldHalf, permissions: ['role.view'], keywords: 'permission' },
+      {
+        to: '/sync/history', label: 'Integrasi Accurate', icon: History, permissions: ['sync.accurate.view', 'accurate.session.view'], keywords: 'sync accurate',
+        children: [
+          { to: '/sync/history', label: 'Sinkron & Log Accurate', keywords: 'sync audit log', permissions: ['sync.accurate.view'] },
+          { to: '/accurate/online', label: 'Accurate Online', permissions: ['accurate.session.view'] },
+        ],
+      },
+      {
+        to: '/settings/users', label: 'Pengaturan', icon: ShieldHalf, permissions: ['user.view', 'role.view'], keywords: 'settings pengaturan',
+        children: [
+          { to: '/settings/users', label: 'Pengguna', keywords: 'user akun', permissions: ['user.view'] },
+          { to: '/settings/roles', label: 'Role & Hak Akses', keywords: 'permission', permissions: ['role.view'] },
+        ],
+      },
     ],
   },
 ]
 
 /** Pages reached from another menu entry (detail / new pages, older paths). */
 const EXTRA: { prefix: string; parent: string; label: string }[] = [
-  { prefix: '/purchase-returns/new', parent: '/purchase-returns', label: 'Buat retur' },
-  { prefix: '/ppb/drafts/', parent: '/ppb', label: 'Draft PPB' },
-  { prefix: '/ppb/drafts', parent: '/ppb', label: 'Draft PPB' },
-  { prefix: '/stock-card/project', parent: '/stock-card', label: 'Proyek' },
-  { prefix: '/safety-stocks', parent: '/inventory/analysis', label: 'Safety Stock' },
+  { prefix: '/purchase-returns/new', parent: '/item-requests', label: 'Buat retur' },
+  { prefix: '/ppb/drafts/', parent: '/item-requests', label: 'Draft PPB' },
+  { prefix: '/ppb/drafts', parent: '/item-requests', label: 'Draft PPB' },
+  { prefix: '/stock-card/project', parent: '/item-requests', label: 'Proyek' },
+  { prefix: '/safety-stocks', parent: '/items', label: 'Safety Stock' },
   { prefix: '/sync/', parent: '/sync/history', label: 'Detail' },
   { prefix: '/vendors', parent: '/items', label: 'Vendor & Supplier' },
   { prefix: '/employees', parent: '/items', label: 'Data Pekerja' },
-  { prefix: '/important-requests/saya', parent: '/important-requests', label: 'Permintaan Saya' },
-  { prefix: '/important-requests/tugas', parent: '/important-requests', label: 'Tugas Saya' },
-  { prefix: '/important-requests/persetujuan', parent: '/important-requests', label: 'Perlu Persetujuan' },
-  { prefix: '/important-requests/selesai', parent: '/important-requests', label: 'Selesai' },
-  { prefix: '/important-requests/baru', parent: '/important-requests', label: 'Buat request' },
+  { prefix: '/important-requests/baru', parent: '/important-requests/saya', label: 'Buat request' },
   { prefix: '/important-requests/', parent: '/important-requests', label: 'Detail' },
 ]
 

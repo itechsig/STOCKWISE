@@ -12,7 +12,7 @@ export const fmtSize = (n: number) => (n >= 1024 * 1024 ? `${(n / 1024 / 1024).t
 
 export function IrStatusBadge({ status, label }: { status: IrStatus; label?: string | null }) {
   const s = IR_STATUS[status] ?? IR_STATUS.DRAFT
-  return <Badge variant={s.variant} className="whitespace-nowrap">{label || s.label}</Badge>
+  return <Badge variant={s.variant} className="whitespace-nowrap text-xs">{label || s.label}</Badge>
 }
 
 export function IrPriorityBadge({ priority }: { priority: IrPriority }) {

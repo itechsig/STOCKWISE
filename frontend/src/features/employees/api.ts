@@ -6,7 +6,8 @@ export interface Employee {
   id: number
   name: string
   position: string | null
-  phone: string | null
+  phone_wa: string | null
+  phone_office: string | null
   department_id: number | null
   department: string | null
   /** the STOCKWISE account this person logs in with, if any */
@@ -42,7 +43,7 @@ export function useEmployeeUsers(enabled: boolean) {
   })
 }
 
-export type EmployeePayload = Partial<Pick<Employee, 'name' | 'position' | 'phone' | 'department_id' | 'user_id' | 'is_active'>> & { id?: number }
+export type EmployeePayload = Partial<Pick<Employee, 'name' | 'position' | 'phone_wa' | 'phone_office' | 'department_id' | 'user_id' | 'is_active'>> & { id?: number }
 
 export function useSaveEmployee() {
   const qc = useQueryClient()
@@ -50,6 +51,30 @@ export function useSaveEmployee() {
     mutationFn: async ({ id, ...body }: EmployeePayload) =>
       id ? (await api.put<{ data: Employee }>(`/api/employees/${id}`, body)).data.data : (await api.post<{ data: Employee }>('/api/employees', body)).data.data,
     meta: { successMessage: false },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
+  })
+}
+
+/** Download Excel template for employee import. */
+export async function downloadEmployeeTemplate() {
+  const res = await api.get('/api/employees/template', { responseType: 'blob' })
+  const url = URL.createObjectURL(res.data as Blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'template_data_pekerja.xlsx'
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+/** Import employees from Excel file. */
+export function useImportEmployees() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData()
+      formData.append('file', file)
+      return (await api.post<{ data: { created: number; updated: number; errors: string[] } }>('/api/employees/import', formData)).data.data
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['employees'] }),
   })
 }

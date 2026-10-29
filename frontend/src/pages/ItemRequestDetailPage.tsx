@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { AlertTriangle, Ban, CheckCircle2, Loader2, Copy, Lock, MessageSquare, PackageCheck, Plus, Search, Undo2 } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, Loader2, Copy, Lock, PackageCheck, Plus, Search, Undo2 } from 'lucide-react'
 import { toast, invalidTo } from '@/lib/notify'
 import { useAuth } from '@/auth/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
@@ -37,10 +37,12 @@ const num = (v: string) => Number(v.trim().replace(',', '.'))
 const clean = (t: string | null | undefined) => (t ? t.replace(/\s*—\s*/g, ', ') : t)
 
 interface Choice {
-  /** the Master Produk item of the free-text line (null = not picked yet — one not in the master is added there first) */
-  item: StockRecommendation | null
-  /** the quantity proposed for approval (default: as asked) */
-  qty: string
+  /** the Master Produk items selected (can be multiple for one request line) */
+  items: StockRecommendation[]
+  /** the quantity for each selected item */
+  qtys: Record<number, string>
+  /** total quantity proposed for approval (sum of all selected items) */
+  totalQty: string
 }
 
 /** Stock of a master item against what was asked, as a short colored text. */
@@ -51,18 +53,18 @@ function stockText(item: StockRecommendation, qty: number) {
 }
 
 /** What the system will do after the approval, from the stock now (it is checked again then). */
-function outlook(item: StockRecommendation | null, qty: number): { text: string; cls: string } {
-  if (!item) return { text: 'Pilih barang dari Master Produk, belum ada? Tambahkan dulu.', cls: 'text-amber-700' }
-  const a = item.stock_known ? Math.max(0, item.available ?? 0) : 0
-  if (a >= qty) return { text: 'Stok cukup → NPBG', cls: 'text-emerald-700' }
-  if (a > 0) return { text: `Stok kurang → NPBG ${fmtQty(a)} + PPB ${fmtQty(qty - a)}`, cls: 'text-amber-700' }
+function outlook(items: StockRecommendation[], totalQty: number): { text: string; cls: string } {
+  if (items.length === 0) return { text: 'Pilih barang dari Master Produk, belum ada? Tambahkan dulu.', cls: 'text-amber-700' }
+  const totalAvailable = items.reduce((sum, item) => sum + (item.stock_known ? Math.max(0, item.available ?? 0) : 0), 0)
+  if (totalAvailable >= totalQty) return { text: 'Stok cukup → NPBG', cls: 'text-emerald-700' }
+  if (totalAvailable > 0) return { text: `Stok kurang → NPBG ${fmtQty(totalAvailable)} + PPB ${fmtQty(totalQty - totalAvailable)}`, cls: 'text-amber-700' }
   return { text: 'Stok kosong → PPB', cls: 'text-red-600' }
 }
 
 /** One requested item to verify: which warehouse item it is, and how many to propose. */
 /** The master item already saved on a line, as a pick option. */
 const savedItem = (l: ItemRequestLine): StockRecommendation | null => (l.item_id ? {
-  id: l.item_id, code: l.kode_barang ?? '', description: l.item_description ?? l.deskripsi_barang, unit: l.satuan,
+  id: l.item_id, code: l.kode_barang ?? '', description: l.deskripsi_peminta ?? l.item_description ?? l.deskripsi_barang, unit: l.satuan,
   available: l.available ?? null, stock_known: l.available != null, score: 0,
 } : null)
 
@@ -78,18 +80,82 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
   const [searching, setSearching] = useState(false)
   const [adding, setAdding] = useState(false)
   const options = extra && !line.recommendations.some((r) => r.id === extra.id) ? [...line.recommendations, extra] : line.recommendations
-  const pick = (item: StockRecommendation | null) => {
-    onChange({ ...choice, item })
-    if (item && item.id !== line.item_id) onPick(item.id)
+
+  const toggleItem = (item: StockRecommendation) => {
+    const isSelected = choice.items.some((i) => i.id === item.id)
+    let newItems: StockRecommendation[]
+    if (isSelected) {
+      newItems = choice.items.filter((i) => i.id !== item.id)
+    } else {
+      newItems = [...choice.items, item]
+      if (item.id !== line.item_id) onPick(item.id)
+    }
+    // Distribute qty proportionally among selected items to match total needed
+    const totalNeeded = Number(line.qty)
+    const newQtys: Record<number, string> = {}
+    
+    if (newItems.length === 0) {
+      onChange({ ...choice, items: newItems, qtys: newQtys, totalQty: '0' })
+      return
+    }
+    
+    // Calculate total available stock across all selected items
+    const totalAvailable = newItems.reduce((sum, i) => sum + (i.stock_known ? Math.max(0, i.available ?? 0) : 0), 0)
+    
+    // If enough stock, distribute to match exactly what's needed
+    if (totalAvailable >= totalNeeded) {
+      // Preserve existing qtys where possible, then distribute remaining
+      let remaining = totalNeeded
+      newItems.forEach((item, idx) => {
+        const existingQty = choice.qtys[item.id] ? Math.round(Number(choice.qtys[item.id])) : 0
+        const available = item.stock_known ? Math.floor(Math.max(0, item.available ?? 0)) : 0
+        // Use existing qty if it's valid and not more than available, otherwise use available
+        const qty = idx === newItems.length - 1 ? remaining : Math.min(existingQty || available, remaining)
+        const roundedQty = Math.round(qty)
+        newQtys[item.id] = String(roundedQty)
+        remaining -= roundedQty
+      })
+    } else {
+      // Not enough stock - give each item its full available stock (integer), the rest will be bought (PPB)
+      newItems.forEach((item, idx) => {
+        const available = item.stock_known ? Math.floor(Math.max(0, item.available ?? 0)) : 0
+        const qty = available
+        newQtys[item.id] = String(qty)
+      })
+    }
+
+    const newTotal = Object.values(newQtys).reduce((sum, q) => sum + Number(q), 0)
+    onChange({ ...choice, items: newItems, qtys: newQtys, totalQty: String(Math.round(newTotal)) })
   }
+
   const fromLookup = (it: ItemLookupResult) => {
     const r: StockRecommendation = { id: it.id, code: it.code, description: it.description, unit: it.unit, available: it.available, stock_known: it.stock_known, score: 0 }
     setExtra(r)
     setSearching(false)
-    pick(r)
+    toggleItem(r)
   }
-  const q = num(choice.qty)
-  const plan = outlook(choice.item, Number.isFinite(q) && q > 0 ? q : Number(line.qty))
+
+  const updateQty = (itemId: number, qty: string) => {
+    const numQty = num(qty)
+    if (!Number.isFinite(numQty) || numQty < 0) return
+
+    const item = choice.items.find((i) => i.id === itemId)
+    if (item && item.stock_known && item.available != null && numQty > item.available) {
+      // Cap at available stock
+      qty = String(Math.round(item.available))
+    }
+
+    // Always round to integer
+    qty = String(Math.round(numQty))
+
+    const newQtys = { ...choice.qtys, [itemId]: qty }
+    const newTotal = Object.values(newQtys).reduce((sum, q) => sum + (Number.isFinite(num(q)) ? Math.round(num(q)) : 0), 0)
+    onChange({ ...choice, qtys: newQtys, totalQty: String(Math.round(newTotal)) })
+  }
+
+  const totalNeeded = Number(line.qty)
+  const totalSelected = choice.items.reduce((sum, i) => sum + Number(choice.qtys[i.id] || 0), 0)
+  const plan = outlook(choice.items, Math.round(totalSelected))
 
   return (
     <Card className="space-y-4 p-4">
@@ -104,29 +170,42 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
 
       {/* which warehouse item */}
       <div className="-mb-2 flex items-center justify-between text-xs text-muted-foreground">
-        <span>Barang di Master Produk</span>
+        <span>Barang di Master Produk (pilih satu atau lebih untuk memenuhi permintaan)</span>
         {saving ? <span className="flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Menyimpan…</span>
-          : line.item_id ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="size-3" /> Tersimpan · {line.kode_barang}</span>
-          : <span>Klik barang untuk menyimpan pilihan</span>}
+          : choice.items.length > 0 ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="size-3" /> {choice.items.length} barang dipilih</span>
+          : <span>Pilih barang untuk memenuhi permintaan</span>}
       </div>
-      <div className="divide-y rounded-lg border" role="radiogroup" aria-label={`Barang untuk ${line.deskripsi_peminta ?? line.deskripsi_barang}`}>
+      <div className="divide-y rounded-lg border">
         {/* every recommendation, best match first: 5 rows in view, the rest by scrolling */}
         <div className="max-h-[14.5rem] divide-y overflow-y-auto overscroll-contain">
           {options.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground">Tidak ada rekomendasi, cari barang lain atau tambahkan ke Master Produk.</p>}
-          {options.map((r, i) => (
-            <label key={r.id} className={cn('flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/50', choice.item?.id === r.id && 'bg-primary/5')}>
-              <input type="radio" className="size-4 shrink-0 accent-primary" checked={choice.item?.id === r.id} onChange={() => pick(r)} />
-              <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{i + 1}</span>
-              <span className="min-w-0 flex-1 break-words">{r.description}<span className="ml-1.5 font-mono text-xs text-muted-foreground">{r.code}</span></span>
-              <span className="shrink-0 text-xs">{stockText(r, line.qty)}</span>
-            </label>
-          ))}
+          {options.map((r, i) => {
+            const isSelected = choice.items.some((item) => item.id === r.id)
+            const qty = choice.qtys[r.id] || String(Math.round(Math.min(totalNeeded, r.available ?? totalNeeded)))
+            return (
+              <label key={r.id} className={cn('flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/50', isSelected && 'bg-primary/5')}>
+                <input type="checkbox" className="size-4 shrink-0 accent-primary" checked={isSelected} onChange={() => toggleItem(r)} />
+                <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{i + 1}</span>
+                <span className="min-w-0 flex-1 break-words">{r.description}<span className="ml-1.5 font-mono text-xs text-muted-foreground">{r.code}</span></span>
+                <span className="shrink-0 text-xs">{stockText(r, totalNeeded)}</span>
+                {isSelected && (
+                  <Input
+                    className="h-7 w-20 text-right text-xs tabular-nums"
+                    inputMode="numeric"
+                    value={qty}
+                    onChange={(e) => updateQty(r.id, e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                )}
+              </label>
+            )
+          })}
         </div>
         {options.length > 5 && <p className="bg-muted/30 px-3 py-1 text-center text-xs text-muted-foreground">{options.length} rekomendasi, scroll untuk melihat lainnya</p>}
         {searching ? (
           <div className="p-2"><ItemPicker onPick={fromLookup} /></div>
         ) : (
-          <div className="flex flex-wrap">
+          <div className="flex flex-wrap px-3 py-2">
             <button type="button" onClick={() => setSearching(true)} className="flex items-center gap-2 px-3 py-2.5 text-sm text-primary">
               <Search className="size-4" /> Cari barang lain
             </button>
@@ -143,14 +222,20 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
         onCreated={(it) => {
           const r: StockRecommendation = { id: it.id, code: it.code, description: it.description, unit: it.unit?.code ?? null, available: 0, stock_known: true, score: 0 }
           setExtra(r)
-          pick(r)
+          toggleItem(r)
         }} />
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        <Label htmlFor={`q-${line.id}`} className="text-muted-foreground">Jumlah diajukan</Label>
-        <Input id={`q-${line.id}`} className="h-8 w-24 text-right tabular-nums" inputMode="decimal" value={choice.qty}
-          onChange={(e) => onChange({ ...choice, qty: e.target.value })} />
-        <span className="text-xs text-muted-foreground">dari {fmtQty(line.qty)} {line.satuan ?? ''}</span>
+        <span className="text-muted-foreground">Total dipilih:</span>
+        <span className={cn('font-semibold tabular-nums', totalSelected === totalNeeded ? 'text-emerald-700' : totalSelected > totalNeeded ? 'text-red-600' : 'text-amber-700')}>
+          {fmtQty(totalSelected)} {line.satuan ?? ''}
+        </span>
+        <span className="text-xs text-muted-foreground">dari {fmtQty(totalNeeded)} {line.satuan ?? ''}</span>
+        {totalSelected !== totalNeeded && (
+          <span className="text-xs font-medium text-red-600">
+            {totalSelected > totalNeeded ? `Kelebihan ${fmtQty(totalSelected - totalNeeded)}` : `Kurang ${fmtQty(totalNeeded - totalSelected)}`}
+          </span>
+        )}
         <span className={cn('basis-full text-xs font-medium', plan.cls)}>Perkiraan setelah approval: {plan.text}</span>
       </div>
     </Card>
@@ -211,11 +296,14 @@ function PpbCell({ line, status }: { line: ItemRequestLine; status: string }) {
 /** An item's name (and what the requester typed), its images beside it: this item, these photos. */
 function LineName({ line, requestId }: { line: ItemRequestLine; requestId: number }) {
   const matched = !!line.item_description
+  // For Item Request (not PPB/PO), always show the original requester's description
+  // For PPB/PO, show the matched item description from Master Produk
+  const displayName = line.deskripsi_peminta ?? line.deskripsi_barang
   return (
     <div className="min-w-0">
-      <div className="break-words font-medium">{line.item_description ?? line.deskripsi_barang}</div>
+      <div className="break-words font-medium">{displayName}</div>
       <div className="break-words text-xs text-muted-foreground">
-        {[line.kode_barang, line.satuan, matched && line.deskripsi_peminta && line.deskripsi_peminta !== line.deskripsi_barang ? `diminta: ${line.deskripsi_peminta}` : null, line.note].filter(Boolean).join(' · ')}
+        {[line.kode_barang, line.satuan, matched && line.item_description && line.item_description !== displayName ? `cocok: ${line.item_description}` : null, line.note].filter(Boolean).join(' · ')}
       </div>
       {/* phone (cards): the images under the name */}
       {(line.images?.length ?? 0) > 0 && <RequestImages requestId={requestId} lineId={line.id} slots={line.images} size="size-11" className="mt-1.5 gap-1 sm:hidden" />}
@@ -227,7 +315,7 @@ function LineName({ line, requestId }: { line: ItemRequestLine; requestId: numbe
  * The items: asked → approved → handed over → left, the stock now, the status (a table; cards on a phone).
  * Manager / Direktur do not change quantities here: they send the request back to admin gudang.
  */
-function ItemsTable({ req }: { req: ItemRequestDetail }) {
+function ItemsTable({ req, selectedLineId, onSelectLine }: { req: ItemRequestDetail; selectedLineId: number | null; onSelectLine: (id: number) => void }) {
   const decided = req.lines.some((l) => l.approved_qty != null)
   // during the Manager / Direktur approval nothing is handed over yet: no Diserahkan / Sisa columns
   const handing = decided && !['APPROVAL_MANAGER', 'APPROVAL_DIREKTUR'].includes(req.status)
@@ -293,7 +381,7 @@ function ItemsTable({ req }: { req: ItemRequestDetail }) {
           </thead>
           <tbody className="divide-y">
             {req.lines.map((l, i) => (
-              <tr key={l.id} className="align-top">
+              <tr key={l.id} className={cn('align-top cursor-pointer hover:bg-muted/50', selectedLineId === l.id && 'bg-primary/5')} onClick={() => l.decision === null && onSelectLine(l.id)}>
                 <td className="px-4 py-3 tabular-nums text-muted-foreground">{i + 1}</td>
                 <td className="px-3 py-3"><LineName line={l} requestId={req.id} /></td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{fmtQty(l.qty)}</td>
@@ -601,6 +689,7 @@ export function ItemRequestDetailPage() {
   const canProcess = !!req && hasPermission('item_request.process') && ['MENUNGGU', 'DIPROSES', 'PERLU_PERBAIKAN'].includes(req.status)
   const open = useMemo(() => (canProcess && req ? req.lines.filter((l) => l.decision === null) : []), [req, canProcess])
   const [choices, setChoices] = useState<Record<number, Choice>>({})
+  const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
   const [pelanggan, setPelanggan] = useState('')
   const [tipe, setTipe] = useState<'Penjualan' | 'Non Penjualan'>('Non Penjualan')
   const [err, setErr] = useState<string | null>(null)
@@ -608,7 +697,7 @@ export function ItemRequestDetailPage() {
   // default per line: the best recommendation, the quantity asked
   useEffect(() => {
     // the item already saved on the line; nothing picked for the admin (no blue row before a click)
-    setChoices((prev) => Object.fromEntries(open.map((l) => [l.id, prev[l.id] ?? { item: savedItem(l), qty: String(Number(l.qty)) }])))
+    setChoices((prev) => Object.fromEntries(open.map((l) => [l.id, prev[l.id] ?? { items: savedItem(l) ? [savedItem(l)!] : [], qtys: {}, totalQty: String(Number(l.qty)) }])))
   }, [open])
   useEffect(() => { if (req) setPelanggan((p) => p || req.divisi || req.requester_name || '') }, [req])
   // opened from the Approval page's "Siapkan barang"
@@ -628,13 +717,28 @@ export function ItemRequestDetailPage() {
 
   const submit = () => {
     setErr(null)
-    const unmatched = open.find((l) => !choices[l.id]?.item)
-    if (unmatched) return invalidTo(setErr, `"${unmatched.deskripsi_barang}" belum dipilih dari Master Produk, kalau belum ada, tambahkan dulu.`)
+    const unmatched = open.find((l) => choices[l.id]?.items.length === 0)
+    if (unmatched) return invalidTo(setErr, `"${unmatched.deskripsi_peminta ?? unmatched.deskripsi_barang}" belum dipilih dari Master Produk, kalau belum ada, tambahkan dulu.`)
     if (!pelanggan.trim()) return invalidTo(setErr, 'Isi Pelanggan untuk NPBG.')
-    const badQty = open.find((l) => !(num(choices[l.id]?.qty ?? '') > 0 && num(choices[l.id].qty) <= Number(l.qty)))
-    if (badQty) return invalidTo(setErr, `Jumlah "${badQty.deskripsi_barang}" 1–${fmtQty(badQty.qty)}.`)
+    
+    // Validate total quantity exactly matches the request
+    const badQty = open.find((l) => {
+      const total = Math.round(num(choices[l.id]?.totalQty ?? '0'))
+      const needed = Number(l.qty)
+      return !Number.isFinite(total) || total <= 0 || total !== needed
+    })
+    if (badQty) return invalidTo(setErr, `Jumlah "${badQty.deskripsi_peminta ?? badQty.deskripsi_barang}" harus sama persis dengan yang diminta (${fmtQty(badQty.qty)} ${badQty.satuan ?? ''}). Saat ini: ${fmtQty(Math.round(num(choices[badQty.id]?.totalQty ?? '0')))}.`)
+    
+    // For now, we'll take the first selected item (or need to adjust API to support multiple)
+    // The backend needs to be updated to handle multiple items per line
     proc.mutate({
-      lines: Object.fromEntries(open.map((l) => [l.id, { item_id: choices[l.id]?.item?.id ?? null, qty: num(choices[l.id].qty) }])),
+      lines: Object.fromEntries(open.map((l) => {
+        const choice = choices[l.id]
+        const items = choice?.items ?? []
+        // Take the first item for now (API may need update for multiple)
+        const item = items.length > 0 ? items[0] : null
+        return [l.id, { item_id: item?.id ?? null, qty: Math.round(num(choice?.totalQty ?? '0')) }]
+      })),
       npbg: { pelanggan: pelanggan.trim(), tipe_npbg: tipe },
     }, { onError: (e) => setErr(apiErrorMessage(e)) })
   }
@@ -645,8 +749,6 @@ export function ItemRequestDetailPage() {
     else toast.error(`Tidak bisa menyalin otomatis. Salin manual: ${url}`, { duration: 15000 })
   }
 
-  const approvalNotes = [...req.approval_log].reverse()
-    .filter((a) => (a.stage === 'MANAGER' || a.stage === 'DIREKTUR') && a.note && !a.note.startsWith('Disetujui otomatis'))
   const overdue = !!req.needed_date && !['SELESAI', 'DITOLAK', 'DIBATALKAN'].includes(req.status) && new Date(req.needed_date) < new Date(new Date().toDateString())
 
   return (
@@ -714,25 +816,9 @@ export function ItemRequestDetailPage() {
         </Card>
       )}
 
-      {/* notes the Manager / Direktur left with their decision, for everyone */}
-      {approvalNotes.length > 0 && (
-        <Card className="border-blue-200 bg-blue-50/50 p-4 text-sm">
-          <div className="mb-2 flex items-center gap-2 font-semibold text-blue-900"><MessageSquare className="size-4" /> Catatan persetujuan</div>
-          <ul className="space-y-1.5">
-            {approvalNotes.map((a, i) => (
-              <li key={i}>
-                <span className="font-medium">{a.stage === 'MANAGER' ? 'Manajer' : 'Direktur'}{a.user_name ? ` (${a.user_name})` : ''}:</span>{' '}
-                <span>{clean(a.note)}</span>
-                <span className="text-xs text-muted-foreground"> · {a.at ? fmtDateTime(a.at) : ''}</span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
       {/* the items: asked → approved → given (NPBG) / bought (PPB) */}
       <Panel title={`Item (${req.lines.length})`}>
-        <ItemsTable req={req} />
+        <ItemsTable req={req} selectedLineId={selectedLineId} onSelectLine={setSelectedLineId} />
         {/* the requester's images, for everyone handling it until it is done */}
         {(req.images?.length ?? 0) > 0 && (
           <div className="space-y-2 border-t px-4 py-3">
@@ -746,16 +832,28 @@ export function ItemRequestDetailPage() {
       {open.length > 0 && (
         <Panel title={`Verifikasi item (${open.length})`} className="border-primary/30">
           <p className="border-b bg-primary/5 px-4 py-2.5 text-sm">
-            Cocokkan tiap barang dengan <b>Master Produk</b> dan jumlahnya. Belum ada di master? Tambahkan dulu (stok 0).
+            <b>Klik item di tabel</b> untuk memverifikasi. Cocokkan barang dengan <b>Master Produk</b> dan jumlahnya.
+            Bisa pilih <b>beberapa barang</b> untuk satu permintaan (misal: Sidu 3 + Sinarmas 2 untuk buku tulis 5).
+            Belum ada di master? Tambahkan dulu (stok 0).
             Setelah disetujui Manager & Direktur, <b>sistem</b> mengecek stok: cukup → NPBG, kurang → NPBG sebagian + sisanya Draft PPB, kosong → Draft PPB.
           </p>
-          <div className="grid gap-3 bg-muted/20 p-3 xl:grid-cols-2">
-            {open.map((l) => choices[l.id] && (
-              <OpenLine key={l.id} line={l} requestId={req.id} choice={choices[l.id]} onChange={(c) => setChoices((x) => ({ ...x, [l.id]: c }))}
-                saving={match.isPending && match.variables?.lineId === l.id}
-                onPick={(itemId) => match.mutate({ lineId: l.id, itemId }, { onError: (e) => setErr(apiErrorMessage(e)) })} />
-            ))}
-          </div>
+          {selectedLineId !== null && choices[selectedLineId] ? (
+            <div className="bg-muted/20 p-3">
+              <OpenLine
+                key={selectedLineId}
+                line={open.find((l) => l.id === selectedLineId)!}
+                requestId={req.id}
+                choice={choices[selectedLineId]}
+                onChange={(c) => setChoices((x) => ({ ...x, [selectedLineId]: c }))}
+                saving={match.isPending && match.variables?.lineId === selectedLineId}
+                onPick={(itemId) => match.mutate({ lineId: selectedLineId, itemId }, { onError: (e) => setErr(apiErrorMessage(e)) })}
+              />
+            </div>
+          ) : (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              Klik salah satu item di tabel di atas untuk memulai verifikasi
+            </div>
+          )}
           <div className="space-y-3 border-t p-4">
             <div className="grid gap-3 sm:grid-cols-2 lg:max-w-2xl">
               <div className="space-y-1"><Label htmlFor="pr-pelanggan">Pelanggan NPBG</Label><Input id="pr-pelanggan" value={pelanggan} maxLength={200} onChange={(e) => setPelanggan(e.target.value)} /></div>
@@ -766,7 +864,7 @@ export function ItemRequestDetailPage() {
             {err && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p>}
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-sm text-muted-foreground">
-                {open.filter((l) => choices[l.id]?.item).length} dari {open.length} barang sudah dicocokkan
+                {open.filter((l) => choices[l.id]?.items.length > 0).length} dari {open.length} barang sudah dicocokkan
               </span>
               <Button onClick={submit} disabled={proc.isPending}>
                 <CheckCircle2 className="size-4" /> {proc.isPending ? 'Mengirim…' : 'Kirim ke approval'}

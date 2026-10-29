@@ -15,7 +15,6 @@ import { apiErrorMessage } from '@/lib/api'
 import { invalidTo, toast } from '@/lib/notify'
 import { cn } from '@/lib/utils'
 
-const CATEGORIES = ['Keuangan', 'Administrasi', 'Gudang', 'Pembelian', 'Operasional', 'Laporan', 'Lainnya']
 const toLocal = (v: string | null | undefined) => (v ? new Date(new Date(v).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '')
 
 /** Buat / ubah Important Request: a draft is all editable; once sent, the content and more recipients. */
@@ -35,19 +34,17 @@ export function IrFormPage() {
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<IrPriority>('MEDIUM')
   const [deadline, setDeadline] = useState('')
-  const [category, setCategory] = useState('')
-  const [approval, setApproval] = useState(true)
   const [mode, setMode] = useState<'INDIVIDUAL' | 'COLLECTIVE'>('INDIVIDUAL')
-  const [note, setNote] = useState('')
   const [picked, setPicked] = useState<number[]>([])
   const [who, setWho] = useState('')
   const [files, setFiles] = useState<PickedFile[]>([])
   const [err, setErr] = useState<string | null>(null)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   useEffect(() => {
     if (!r) return
-    setTitle(r.title); setDescription(r.description); setPriority(r.priority); setDeadline(toLocal(r.deadline)); setCategory(r.category ?? '')
-    setApproval(r.requires_approval); setMode(r.assignment_mode); setNote(r.note ?? ''); setPicked(r.assignees.map((a) => a.user_id))
+    setTitle(r.title); setDescription(r.description); setPriority(r.priority); setDeadline(toLocal(r.deadline))
+    setMode(r.assignment_mode); setPicked(r.assignees.map((a) => a.user_id))
   }, [r])
 
   const locked = new Set(sent ? r!.assignees.map((a) => a.user_id) : [])
@@ -72,9 +69,9 @@ export function IrFormPage() {
       confirmLabel: 'Kirim',
     }))) return
     const body: IrPayload = {
-      title: title.trim(), description: description.trim(), priority, category: category.trim() || null, note: note.trim() || null,
+      title: title.trim(), description: description.trim(), priority,
       assignee_ids: picked, attachments: tokens,
-      ...(sent ? {} : { deadline: deadline ? new Date(deadline).toISOString() : null, requires_approval: approval, assignment_mode: mode }),
+      ...(sent ? {} : { deadline: deadline ? new Date(deadline).toISOString() : null, assignment_mode: mode }),
     }
     try {
       if (editId) {
@@ -103,41 +100,17 @@ export function IrFormPage() {
       <PageHeader title={editId ? `Ubah ${r?.number ?? ''}` : 'Buat Important Request'} icon={<ClipboardList className="size-5" />}
         subtitle={sent ? 'Request sudah dikirim: perubahan dicatat di riwayat dan penerima diberi tahu. Deadline diubah dari halaman detail.' : 'Nomor request dibuat otomatis saat disimpan.'} />
 
-      <Card className="space-y-4 p-4 sm:p-5">
-        <div className="space-y-1.5"><Label htmlFor="ir-title">Judul *</Label><Input id="ir-title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Perbaiki formula penjualan Oktober" /></div>
-        <div className="space-y-1.5"><Label htmlFor="ir-desc">Deskripsi & instruksi pekerjaan *</Label>
-          <Textarea id="ir-desc" rows={6} value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} placeholder="Apa yang harus dikerjakan, acuan yang dipakai, dan hasil yang diharapkan." />
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <Label>Prioritas</Label>
-            <div className="grid grid-cols-4 gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label="Prioritas">
-              {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as IrPriority[]).map((p) => (
-                <button key={p} type="button" role="radio" aria-checked={priority === p} onClick={() => setPriority(p)}
-                  className={cn('rounded-md px-2 py-1.5 text-xs font-medium sm:text-sm', priority === p ? (p === 'URGENT' ? 'bg-red-600 text-white' : 'bg-card text-primary shadow-sm ring-1 ring-border') : 'text-muted-foreground hover:text-foreground')}>
-                  {p.charAt(0) + p.slice(1).toLowerCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="space-y-1.5"><Label htmlFor="ir-deadline">Deadline {!sent && '*'}</Label>
-            <Input id="ir-deadline" type="datetime-local" value={deadline} disabled={sent} onChange={(e) => setDeadline(e.target.value)} />
-          </div>
-          <div className="space-y-1.5"><Label htmlFor="ir-cat">Kategori</Label>
-            <Input id="ir-cat" list="ir-cats" value={category} maxLength={60} onChange={(e) => setCategory(e.target.value)} placeholder="opsional" />
-            <datalist id="ir-cats">{CATEGORIES.map((c) => <option key={c} value={c} />)}</datalist>
-          </div>
-          <div className="space-y-1.5">
-            <Label>Persetujuan hasil</Label>
-            <label className={cn('flex h-9 items-center gap-2 text-sm', sent && 'opacity-60')}>
-              <input type="checkbox" className="size-4 accent-primary" checked={approval} disabled={sent} onChange={(e) => setApproval(e.target.checked)} />
-              Wajib saya setujui sebelum selesai
-            </label>
+      <Card className="space-y-6 p-4 sm:p-6">
+        {/* Essential fields */}
+        <div className="space-y-4">
+          <div className="space-y-1.5"><Label htmlFor="ir-title">Judul *</Label><Input id="ir-title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} placeholder="mis. Perbaiki formula penjualan Oktober" /></div>
+          <div className="space-y-1.5"><Label htmlFor="ir-desc">Deskripsi & instruksi pekerjaan *</Label>
+            <Textarea id="ir-desc" rows={5} value={description} maxLength={20000} onChange={(e) => setDescription(e.target.value)} placeholder="Apa yang harus dikerjakan, acuan yang dipakai, dan hasil yang diharapkan." />
           </div>
         </div>
 
-        <div className="space-y-2">
+        {/* Recipients - always important */}
+        <div className="space-y-3">
           <div className="flex flex-wrap items-end justify-between gap-2">
             <Label>Penerima * <span className="font-normal text-muted-foreground">({picked.length} dipilih)</span></Label>
             <div className="relative w-full sm:w-64">
@@ -159,9 +132,9 @@ export function IrFormPage() {
           {sent && <p className="text-xs text-muted-foreground">Penerima yang sudah ditugaskan tidak bisa dihapus; penerima baru bisa ditambahkan.</p>}
           {picked.length > 1 && (
             <div className={cn('grid gap-2 sm:grid-cols-2', sent && 'pointer-events-none opacity-60')}>
-              {([['INDIVIDUAL', 'Tugas individu', 'Tiap penerima mengerjakan & mengirim hasilnya sendiri; selesai bila semua selesai.'],
-                ['COLLECTIVE', 'Tugas bersama', 'Satu hasil untuk semua; hasil yang disetujui menyelesaikan semua penerima.']] as const).map(([k, label, hint]) => (
-                <button key={k} type="button" onClick={() => setMode(k)}
+              {(['INDIVIDUAL', 'Tugas individu', 'Tiap penerima mengerjakan & mengirim hasilnya sendiri; selesai bila semua selesai.'] as const,
+                ['COLLECTIVE', 'Tugas bersama', 'Satu hasil untuk semua; hasil yang disetujui menyelesaikan semua penerima.'] as const).map(([k, label, hint]) => (
+                <button key={k} type="button" onClick={() => setMode(k as 'INDIVIDUAL' | 'COLLECTIVE')}
                   className={cn('rounded-lg border p-3 text-left', mode === k ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'bg-card hover:bg-muted/40')}>
                   <div className="text-sm font-semibold">{label}</div><div className="text-xs text-muted-foreground">{hint}</div>
                 </button>
@@ -170,17 +143,41 @@ export function IrFormPage() {
           )}
         </div>
 
-        <div className="space-y-1.5">
-          <Label>Lampiran (file awal)</Label>
-          {r && r.attachments.length > 0 && <IrFileList requestId={r.id} files={r.attachments} />}
-          <IrFilePicker files={files} onChange={setFiles} maxMb={r?.me.max_mb ?? 20} />
-        </div>
+        {/* Advanced options - progressive disclosure */}
+        <div className="border-t pt-4">
+          <button type="button" onClick={() => setShowAdvanced(!showAdvanced)} className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
+            {showAdvanced ? 'Sembunyikan opsi lanjutan' : 'Tampilkan opsi lanjutan'}
+          </button>
+          {showAdvanced && (
+            <div className="mt-4 space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label>Prioritas</Label>
+                  <div className="grid grid-cols-4 gap-1 rounded-lg border bg-muted/40 p-1" role="radiogroup" aria-label="Prioritas">
+                    {(['LOW', 'MEDIUM', 'HIGH', 'URGENT'] as IrPriority[]).map((p) => (
+                      <button key={p} type="button" role="radio" aria-checked={priority === p} onClick={() => setPriority(p)}
+                        className={cn('rounded-md px-2 py-1.5 text-xs font-medium sm:text-sm', priority === p ? (p === 'URGENT' ? 'bg-red-600 text-white' : 'bg-card text-primary shadow-sm ring-1 ring-border') : 'text-muted-foreground hover:text-foreground')}>
+                        {p.charAt(0) + p.slice(1).toLowerCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-1.5"><Label htmlFor="ir-deadline">Deadline {!sent && '*'}</Label>
+                  <Input id="ir-deadline" type="datetime-local" value={deadline} disabled={sent} onChange={(e) => setDeadline(e.target.value)} />
+                </div>
+              </div>
 
-        <div className="space-y-1.5"><Label htmlFor="ir-note">Catatan tambahan</Label><Textarea id="ir-note" rows={2} value={note} maxLength={5000} onChange={(e) => setNote(e.target.value)} placeholder="opsional" /></div>
+              <div className="space-y-1.5">
+                <Label>Lampiran (file awal)</Label>
+                {r && r.attachments.length > 0 && <IrFileList requestId={r.id} files={r.attachments} />}
+                <IrFilePicker files={files} onChange={setFiles} maxMb={r?.me.max_mb ?? 20} />
+              </div>
+            </div>
+          )}
+        </div>
 
         {err && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p>}
         <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-          {!sent && <Button variant="outline" disabled={busy} onClick={() => save(false)}><Save className="size-4" /> Simpan draft</Button>}
           {sent
             ? <Button disabled={busy} onClick={() => save(false)}><Save className="size-4" /> Simpan perubahan</Button>
             : <Button disabled={busy} onClick={() => save(true)}><Send className="size-4" /> Kirim request</Button>}

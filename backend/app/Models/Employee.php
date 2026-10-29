@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 class Employee extends Model
 {
     protected $fillable = [
-        'name', 'name_normalized', 'phone', 'position', 'department_id', 'site_id', 'user_id',
+        'name', 'name_normalized', 'phone_wa', 'phone_office', 'position', 'department_id', 'site_id', 'user_id',
         'role_hint', 'is_active', 'needs_review', 'source',
     ];
 
