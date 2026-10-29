@@ -46,8 +46,8 @@ export function IrDashboardPage() {
   if (isError) return <p className="text-sm text-destructive">Gagal memuat ringkasan Important Request.</p>
   if (isLoading || !s) return <p className="py-16 text-center text-sm text-muted-foreground">Memuat…</p>
 
-  const hasActions = s.action.to_confirm > 0 || s.action.to_revise > 0 || s.action.to_review > 0
-  const activeCount = s.stats.unconfirmed + s.stats.in_progress + s.stats.blocked + s.stats.waiting_review
+  const hasActions = s.action.to_do > 0 || s.action.to_revise > 0 || s.action.to_review > 0
+  const activeCount = s.stats.assigned + s.stats.waiting_review
 
   return (
     <div className="space-y-6">
@@ -59,21 +59,21 @@ export function IrDashboardPage() {
         <Card className="border-primary/20 bg-primary/5 p-4">
           <h3 className="mb-3 text-sm font-semibold text-foreground">Perlu tindakan Anda</h3>
           <div className="space-y-2">
-            {s.action.to_confirm > 0 && (
+            {s.action.to_do > 0 && (
               <Link to={IR_SCOPES.tasks.path} className="flex items-center justify-between rounded-lg bg-white px-4 py-3 text-sm ring-1 ring-inset ring-amber-200 hover:bg-amber-50">
-                <span className="font-medium text-amber-900">{s.action.to_confirm} tugas baru menunggu konfirmasi</span>
+                <span className="font-medium text-amber-900">{s.action.to_do} tugas belum diserahkan</span>
                 <span className="text-muted-foreground">→</span>
               </Link>
             )}
             {s.action.to_revise > 0 && (
               <Link to={IR_SCOPES.tasks.path} className="flex items-center justify-between rounded-lg bg-white px-4 py-3 text-sm ring-1 ring-inset ring-orange-200 hover:bg-orange-50">
-                <span className="font-medium text-orange-900">{s.action.to_revise} tugas diminta revisi</span>
+                <span className="font-medium text-orange-900">{s.action.to_revise} tugas dikembalikan untuk revisi</span>
                 <span className="text-muted-foreground">→</span>
               </Link>
             )}
             {s.action.to_review > 0 && (
               <Link to={IR_SCOPES.review.path} className="flex items-center justify-between rounded-lg bg-white px-4 py-3 text-sm ring-1 ring-inset ring-blue-200 hover:bg-blue-50">
-                <span className="font-medium text-blue-900">{s.action.to_review} hasil menunggu persetujuan</span>
+                <span className="font-medium text-blue-900">{s.action.to_review} hasil diserahkan, menunggu Anda tinjau</span>
                 <span className="text-muted-foreground">→</span>
               </Link>
             )}
@@ -159,7 +159,7 @@ export function IrListPage({ scope }: { scope: Exclude<IrScope, 'all'> }) {
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">Status</label>
                 <Select aria-label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1) }}>
                   <option value="">Semua status</option>
-                  {Object.entries(IR_STATUS).filter(([k]) => k !== 'SELESAI' && (scope === 'mine' || k !== 'DRAFT')).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                  {Object.entries(IR_STATUS).filter(([k]) => ['DITUGASKAN', 'MENUNGGU_REVIEW', 'DIBATALKAN', ...(scope === 'mine' ? ['DRAFT'] : [])].includes(k)).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
                 </Select>
               </div>
             )}

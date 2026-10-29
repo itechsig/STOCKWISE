@@ -140,6 +140,11 @@ export function PoListPage() {
           <div className="flex flex-wrap items-center gap-2">
             <ExportBar dataset="purchase-orders" filters={activeFilters} filenameBase="purchase-order" viewPermission="po.view" columns={visibleKeys} />
             {hasPermission('po.create') && (
+              <Button size="sm" variant="outline" asChild>
+                <Link to="/purchase-orders/draft">Draft PO</Link>
+              </Button>
+            )}
+            {hasPermission('po.create') && (
               <Button size="sm" onClick={() => setFormOpen(true)}>
                 <Plus className="size-4" />
                 Tambah PO

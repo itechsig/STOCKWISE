@@ -144,16 +144,16 @@ class ItemRequestApprovalTest extends TestCase
         $this->get("/api/item-requests/{$id}/fulfillments/{$done['fulfillments'][0]['id']}/file/handover")->assertForbidden();
     }
 
-    public function test_the_validated_master_name_is_used_to_the_end(): void
+    public function test_the_requesters_item_name_stays_to_the_end_the_npbg_uses_the_master_item(): void
     {
         $this->stock(20);
         $karyawan = $this->actingAsRole('karyawan', ['name' => 'SITI']);
         $req = $this->postJson('/api/item-requests', ['lines' => [['deskripsi_barang' => 'kertas putih buat print', 'qty' => 4, 'satuan' => 'lembar']]])->json('data');
         $lineId = $req['lines'][0]['id'];
         $this->actingAsRole('admin_gudang');
-        // picking the master item: the line takes its name, code and unit; the requester's words stay aside
+        // picking the master item: the line takes its code and unit, its name stays what the requester wrote
         $picked = $this->putJson("/api/item-requests/{$req['id']}/lines/{$lineId}/match", ['item_id' => $this->item->id])->assertOk()->json('data.lines.0');
-        $this->assertSame(['KERTAS HVS A4 70 GSM', 'ATK.0001', 'kertas putih buat print'], [$picked['deskripsi_barang'], $picked['kode_barang'], $picked['deskripsi_peminta']]);
+        $this->assertSame(['kertas putih buat print', 'ATK.0001', 'KERTAS HVS A4 70 GSM'], [$picked['deskripsi_barang'], $picked['kode_barang'], $picked['item_description']]);
         $this->assertNotEmpty($picked['recommendations'], 'recommendations still come from what was asked');
         // only an active Master Produk item goes to approval
         $this->item->update(['is_active' => false]);
@@ -166,14 +166,13 @@ class ItemRequestApprovalTest extends TestCase
         $f = $this->getJson("/api/item-requests/{$id}")->json('data.fulfillments.0');
         $done = $this->handover($id, $f['id']);
         $notes = collect($done['approval_log'])->pluck('note')->filter()->implode(' | ');
-        $this->assertStringContainsString('KERTAS HVS A4 70 GSM', $notes);
-        $this->assertStringNotContainsString('kertas putih', $notes);
+        $this->assertStringContainsString('kertas putih buat print', $notes);
+        // the NPBG is the warehouse's document: the Master Produk item
         $this->assertSame('KERTAS HVS A4 70 GSM', Npbg::sole()->deskripsi_barang);
-        $this->assertStringNotContainsString('kertas putih', (string) Npbg::sole()->deskripsi);
-        // the requester follows it under the master name too
+        // the requester follows it under their own words
         $this->actingAs($karyawan, 'sanctum');
         $token = $this->getJson("/api/item-requests/{$id}")->json('data.track_token');
-        $this->getJson("/api/public/request-status?tokens={$token}")->assertJsonPath('data.0.lines.0.deskripsi_barang', 'KERTAS HVS A4 70 GSM');
+        $this->getJson("/api/public/request-status?tokens={$token}")->assertJsonPath('data.0.lines.0.deskripsi_barang', 'kertas putih buat print');
     }
 
     public function test_lines_matched_before_are_converted_and_only_system_notes_renamed(): void
@@ -230,6 +229,36 @@ class ItemRequestApprovalTest extends TestCase
         $this->assertSame([3.0, 1.0, 2.0], [(float) $part['lines'][0]['approved_qty'], (float) $part['lines'][0]['fulfilled_qty'], (float) $part['lines'][0]['remaining']]);
         $this->assertSame('DISIAPKAN', $part['status'], 'stock is there for the 2 still owed');
         $this->assertStringContainsString('sisa tetap ditunggu', collect($part['approval_log'])->firstWhere('stage', 'SERAH_TERIMA')['note']);
+    }
+
+    public function test_one_requested_item_met_by_two_master_items_the_shortage_goes_to_draft_ppb(): void
+    {
+        // "buku" 10: buku Sidu has 6 in stock, buku Sinar none — verification is only which item and how many
+        $this->stock(6); // the setUp item = buku Sidu here
+        $sinar = Item::factory()->create(['code' => 'ATK.0002', 'description' => 'BUKU SINAR', 'is_active' => true]);
+        $this->actingAsRole('karyawan', ['name' => 'SITI']);
+        $req = $this->postJson('/api/item-requests', ['divisi' => 'HRD', 'lines' => [['deskripsi_barang' => 'buku', 'qty' => 10, 'satuan' => 'PCS']]])->assertCreated()->json('data');
+        $lineId = $req['lines'][0]['id'];
+        $this->actingAsRole('admin_gudang');
+        // more than asked in total: refused; the same item twice: refused
+        $this->postJson("/api/item-requests/{$req['id']}/process", ['lines' => [$lineId => ['items' => [['item_id' => $this->item->id, 'qty' => 8], ['item_id' => $sinar->id, 'qty' => 4]]]]])
+            ->assertStatus(422);
+        $this->postJson("/api/item-requests/{$req['id']}/process", ['lines' => [$lineId => ['items' => [['item_id' => $sinar->id, 'qty' => 5], ['item_id' => $sinar->id, 'qty' => 5]]]]])
+            ->assertStatus(422);
+        // Sidu 8 (more than its stock of 6 — allowed: the rest is bought) + Sinar 2
+        $data = $this->postJson("/api/item-requests/{$req['id']}/process", ['lines' => [$lineId => ['items' => [['item_id' => $this->item->id, 'qty' => 8], ['item_id' => $sinar->id, 'qty' => 2]]]]])
+            ->assertOk()->assertJsonPath('data.status', 'APPROVAL_MANAGER')->json('data');
+        // two lines, both still "buku" in the requester's words, the master item beside it
+        $this->assertSame([['buku', 'ATK.0001', 8.0], ['buku', 'ATK.0002', 2.0]],
+            array_map(fn ($l) => [$l['deskripsi_peminta'], $l['kode_barang'], (float) $l['approved_qty']], $data['lines']));
+        $this->assertSame(10.0, array_sum(array_map(fn ($l) => (float) $l['qty'], $data['lines'])), 'still 10 asked in all');
+
+        // after approval the stock decides: Sidu 6 from stock (NPBG) + 2 bought, Sinar 2 bought — in the Draft PPB
+        $ready = $this->approveBoth($req['id']);
+        $this->assertSame(6.0, (float) Npbg::sole()->kuantitas);
+        $this->assertEqualsCanonicalizing([['ATK.0001', 2.0], ['ATK.0002', 2.0]],
+            PpbDraft::where('item_request_id', $req['id'])->sole()->lines()->get()->map(fn ($l) => [$l->kode_barang, (float) $l->qty])->all());
+        $this->assertSame('DISIAPKAN', $ready['status']);
     }
 
     public function test_short_stock_partial_npbg_and_the_rest_to_draft_ppb_then_npbg_lanjutan(): void

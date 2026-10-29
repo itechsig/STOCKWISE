@@ -52,6 +52,12 @@ class PurchaseOrderItem extends Model
         return $this->belongsTo(Ppb::class, 'approved_ppb_id');
     }
 
+    /** Draft PO: each vendor's price for this line (the comparison) */
+    public function quotes()
+    {
+        return $this->hasMany(PurchaseOrderQuote::class);
+    }
+
     /** RI (APITMDET) lines that fulfilled this PO line — Accurate's own APITMDET.POID/POSEQ chain. */
     public function riLines()
     {

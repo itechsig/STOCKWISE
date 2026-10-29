@@ -111,7 +111,8 @@ class ItemRequestController extends Controller
         // the stock column: live from the warehouse rows, not the analysis snapshot (follows every RI / NPBG at once)
         $stock = ItemRequestFulfillmentService::availableMany($itemRequest->lines->pluck('item_id'));
         $onHand = ItemRequestFulfillmentService::onHandMany($itemRequest->lines->pluck('item_id'));
-        $lineNames = $itemRequest->lines->mapWithKeys(fn ($l) => [$l->id => [$l->item?->description ?? $l->deskripsi_barang, $l->satuan]]);
+        // the name the requester wrote stays the item's name; the Master Produk name goes beside it
+        $lineNames = $itemRequest->lines->mapWithKeys(fn ($l) => [$l->id => [$l->requestedText(), $l->satuan, $l->item?->description]]);
         // the NPBG / PPB columns: what leaves the stock (NPBG) and what has to be bought (PPB) per line
         $issued = [];
         foreach ($itemRequest->fulfillments as $f) {
@@ -174,6 +175,7 @@ class ItemRequestController extends Controller
                 'signature' => $f->status === 'DISERAHKAN' && $this->hasFile($f->id, 'signature', ItemRequestFulfillmentService::PHOTO_ENTITY),
                 'lines' => $f->lines->map(fn ($fl) => [
                     'id' => $fl->id, 'line_id' => $fl->item_request_line_id, 'deskripsi' => $lineNames[$fl->item_request_line_id][0] ?? null,
+                    'item_description' => $lineNames[$fl->item_request_line_id][2] ?? null,
                     'satuan' => $lineNames[$fl->item_request_line_id][1] ?? null, 'qty' => (float) $fl->qty,
                     'handed_qty' => $fl->handed_qty !== null ? (float) $fl->handed_qty : null, 'npbg_id' => $fl->npbg_id,
                 ])->values(),
@@ -255,6 +257,10 @@ class ItemRequestController extends Controller
             'lines' => ['required', 'array'],
             'lines.*.item_id' => ['nullable', 'integer', 'exists:items,id'],
             'lines.*.qty' => ['nullable', 'numeric', 'min:0.01'],
+            // one requested item met by several Master Produk items (e.g. "buku" = buku Sidu 6 + buku Sinar 4)
+            'lines.*.items' => ['nullable', 'array', 'max:10'],
+            'lines.*.items.*.item_id' => ['required', 'integer', 'exists:items,id'],
+            'lines.*.items.*.qty' => ['required', 'numeric', 'min:0.01'],
             'npbg' => ['nullable', 'array'],
             'npbg.pelanggan' => ['nullable', 'string', 'max:200'],
             'npbg.tipe_npbg' => ['nullable', 'in:Penjualan,Non Penjualan'],
@@ -303,7 +309,7 @@ class ItemRequestController extends Controller
     {
         $user = $request->user();
         $statuses = ItemRequestApprovalService::actionableStatuses($user);
-        $query = ItemRequest::query()->with(['lines.npbg:id,no_npbg', 'approvals'])->withCount('lines')
+        $query = ItemRequest::query()->with(['lines.npbg:id,no_npbg', 'lines.item:id,description', 'approvals'])->withCount('lines')
             ->withCount(['lines as open_lines_count' => fn ($q) => $q->whereNull('decision')]);
         if ($request->input('scope') === 'done') {
             $query->whereHas('approvals', fn ($q) => $q->where('user_id', $user->id)->whereIn('action', ['APPROVE', 'REJECT', 'RETURN', 'FULFILL', 'HANDOVER']))
@@ -337,6 +343,8 @@ class ItemRequestController extends Controller
                 'lines' => $r->lines->map(fn (ItemRequestLine $l) => [
                     'images' => $lineImages[$l->id] ?? [],
                     'id' => $l->id, 'kode_barang' => $l->kode_barang, 'deskripsi_barang' => $l->deskripsi_barang, 'qty' => $l->qty,
+                    // what the requester wrote, and the Master Produk item admin gudang matched it to
+                    'deskripsi_peminta' => $l->requestedText(), 'item_description' => $l->item?->description,
                     'satuan' => $l->satuan, 'note' => $l->note, 'decision' => $l->decision, 'npbg_id' => $l->npbg_id, 'no_npbg' => $l->npbg?->no_npbg,
                     'approved_qty' => $l->approved_qty, 'fulfilled_qty' => (float) $l->fulfilled_qty, 'remaining' => $l->remaining(),
                     'item_id' => $l->item_id, 'available' => $l->item_id && array_key_exists($l->item_id, $stock) ? $stock[$l->item_id] : null,

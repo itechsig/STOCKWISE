@@ -4,13 +4,14 @@ namespace App\Console\Commands\Accurate;
 
 use App\Models\Item;
 use App\Models\Unit;
+use App\Services\Accurate\AccurateSyncService;
 use Illuminate\Console\Attributes\Description;
 use Illuminate\Console\Attributes\Signature;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 #[Signature('accurate:import-new-items {--dry-run : Report counts without inserting anything}')]
-#[Description('Insert Accurate items (accurate_item staging table) that have no matching Stockwise item by code, skipping Accurate\'s category/placeholder nodes (identified by having no UNIT1).')]
+#[Description('Insert Accurate items (accurate_item staging table) that have no matching Stockwise item by code, skipping Accurate\'s category nodes (AccurateSyncService::isProductRow).')]
 class ImportNewItems extends Command
 {
     public function handle(): int
@@ -21,21 +22,18 @@ class ImportNewItems extends Command
             return self::FAILURE;
         }
 
-        $candidates = DB::table('accurate_item as a')
+        // the same rule as the sync: a category node has children or a category-shaped code
+        $parents = DB::table('accurate_item')->whereNotNull('PARENTITEM')->distinct()->pluck('PARENTITEM')->map(fn ($p) => trim((string) $p))->flip();
+        [$candidates, $placeholders] = DB::table('accurate_item as a')
             ->leftJoin('items as i', 'i.code', '=', 'a.ITEMNO')
             ->whereNull('i.id')
-            ->whereNotNull('a.UNIT1')
             ->select('a.ITEMNO', 'a.ITEMDESCRIPTION', 'a.UNIT1', 'a.SUSPENDED')
-            ->get();
+            ->get()
+            ->partition(fn ($r) => trim((string) $r->ITEMNO) !== '' && AccurateSyncService::isProductRow(trim((string) $r->ITEMNO), $parents->has(trim((string) $r->ITEMNO))));
+        $skippedPlaceholders = $placeholders->count();
 
-        $skippedPlaceholders = DB::table('accurate_item as a')
-            ->leftJoin('items as i', 'i.code', '=', 'a.ITEMNO')
-            ->whereNull('i.id')
-            ->whereNull('a.UNIT1')
-            ->count();
-
-        $this->info("Candidates to insert (real products, has UNIT1): {$candidates->count()}");
-        $this->info("Skipped (category/placeholder nodes, no UNIT1): {$skippedPlaceholders}");
+        $this->info("Candidates to insert (products): {$candidates->count()}");
+        $this->info("Skipped (category nodes): {$skippedPlaceholders}");
 
         if ($this->option('dry-run')) {
             $this->comment('Dry run — nothing written.');

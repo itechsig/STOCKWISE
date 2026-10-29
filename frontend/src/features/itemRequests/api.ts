@@ -230,7 +230,8 @@ export interface ItemRequestCreatePayload {
 
 /** Admin gudang verifies: per line the master item (null = new item) and the quantity proposed. */
 export interface ProcessPayload {
-  lines: Record<number, { item_id: number | null; qty: number }>
+  /** per requested line: one Master Produk item, or several (items: the line is split, one per item) */
+  lines: Record<number, { item_id?: number | null; qty?: number; items?: { item_id: number; qty: number }[] }>
   npbg?: { pelanggan?: string | null; tipe_npbg?: 'Penjualan' | 'Non Penjualan' }
 }
 
@@ -389,7 +390,7 @@ export function useSetUrgency(id: number) {
 // ---------------------------------------------------------------- approval (Manager → Direktur → Gudang → serah terima)
 
 export interface ApprovalRow extends ItemRequest {
-  lines: Pick<ItemRequestLine, 'id' | 'item_id' | 'kode_barang' | 'deskripsi_barang' | 'qty' | 'satuan' | 'note' | 'decision' | 'npbg_id' | 'no_npbg' | 'approved_qty' | 'fulfilled_qty' | 'remaining' | 'available' | 'on_hand' | 'images'>[]
+  lines: Pick<ItemRequestLine, 'id' | 'item_id' | 'kode_barang' | 'deskripsi_barang' | 'qty' | 'satuan' | 'note' | 'decision' | 'npbg_id' | 'no_npbg' | 'approved_qty' | 'fulfilled_qty' | 'remaining' | 'available' | 'on_hand' | 'images' | 'deskripsi_peminta' | 'item_description'>[]
   can_approve: boolean
   can_handover: boolean
   can_fulfill?: boolean

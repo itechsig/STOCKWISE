@@ -69,20 +69,18 @@ class ImportantRequestController extends Controller
         $count = fn ($status) => $visible()->whereIn('status', (array) $status)->count();
         $myTasks = DB::table('important_request_assignees as a')->join('important_requests as r', 'r.id', '=', 'a.important_request_id')
             ->where('a.user_id', $user->id)->whereNotIn('r.status', ImportantRequest::CLOSED);
-        $toConfirm = (clone $myTasks)->where('a.status', 'MENUNGGU_KONFIRMASI')->count();
+        $toDo = (clone $myTasks)->where('a.status', 'DITUGASKAN')->count();
         $toRevise = (clone $myTasks)->where('a.status', 'REVISI')->count();
         $toReview = ImportantRequest::where('created_by', $user->id)->whereNotIn('status', ImportantRequest::CLOSED)
             ->whereHas('submissions', fn ($s) => $s->where('status', 'MENUNGGU_REVIEW'))->count();
         $list = fn ($q) => $q->with('creator:id,name', 'assignees.user:id,name')->limit(5)->get()->map(fn ($r) => $this->listRow($r, $user, 0));
 
         return response()->json(['data' => [
-            'badge' => $toConfirm + $toRevise + $toReview,
-            'action' => ['to_confirm' => $toConfirm, 'to_revise' => $toRevise, 'to_review' => $toReview, 'my_open_tasks' => (clone $myTasks)->count()],
+            'badge' => $toDo + $toRevise + $toReview,
+            'action' => ['to_do' => $toDo, 'to_revise' => $toRevise, 'to_review' => $toReview],
             'stats' => [
                 'total' => $visible()->count(),
-                'unconfirmed' => $count('MENUNGGU_KONFIRMASI'),
-                'in_progress' => $count(['DITERIMA', 'IN_PROGRESS', 'REVISI']),
-                'blocked' => $count('TERKENDALA'),
+                'assigned' => $count('DITUGASKAN'),
                 'overdue' => $visible()->overdue()->count(),
                 'waiting_review' => $count('MENUNGGU_REVIEW'),
                 'done' => $count('SELESAI'),
@@ -140,6 +138,8 @@ class ImportantRequestController extends Controller
             'assignees' => $r->assignees->map(fn ($a) => [
                 'id' => $a->id, 'user_id' => $a->user_id, 'name' => $a->user?->name, 'username' => $a->user?->username, 'position' => $a->user?->position,
                 'status' => $a->status, 'status_label' => ImportantRequestService::STATUS_LABELS[$a->status] ?? $a->status, 'progress' => $a->progress,
+                // not handed in and past the deadline: "terlambat" (an indicator)
+                'late' => in_array($a->status, ImportantRequestService::TO_DO, true) && $r->deadline && $r->deadline->isPast() && ! in_array($r->status, ImportantRequest::CLOSED, true),
                 'blocker_note' => $a->blocker_note, 'confirmed_at' => $a->confirmed_at, 'started_at' => $a->started_at, 'submitted_at' => $a->submitted_at, 'completed_at' => $a->completed_at,
             ])->values(),
             'attachments' => $r->attachments->whereNull('comment_id')->whereNull('submission_id')->map(fn ($f) => $this->file($f))->values(),
@@ -151,7 +151,8 @@ class ImportantRequestController extends Controller
             ])->values(),
             'me' => [
                 'is_creator' => $creator,
-                'assignee' => $mine ? ['id' => $mine->id, 'status' => $mine->status, 'progress' => $mine->progress] : null,
+                'assignee' => $mine ? ['id' => $mine->id, 'status' => $mine->status, 'status_label' => ImportantRequestService::STATUS_LABELS[$mine->status] ?? $mine->status,
+                    'submitted_at' => $mine->submitted_at, 'late' => in_array($mine->status, ImportantRequestService::TO_DO, true) && $r->deadline?->isPast() && $open] : null,
                 'can_edit' => $creator && $open,
                 'can_send' => $creator && $r->status === 'DRAFT',
                 'can_delete' => $creator && $r->status === 'DRAFT',
@@ -193,14 +194,11 @@ class ImportantRequestController extends Controller
     {
         abort_unless($this->service->canView($request->user(), $importantRequest), 403);
         $data = $request->validate([
-            'action' => ['required', Rule::in(['confirm', 'start', 'progress', 'blocker', 'submit', 'extension'])],
-            'progress' => ['nullable', 'integer', 'min:0', 'max:100'],
+            'action' => ['required', Rule::in(['submit', 'unsubmit'])],
             'note' => ['nullable', 'string', 'max:5000'],
-            'reason' => ['nullable', 'string', 'max:1000'],
-            'proposed_deadline' => ['nullable', 'date', 'after:now'],
             'attachments' => ['nullable', 'array', 'max:10'],
             'attachments.*' => ['string'],
-        ], ['proposed_deadline.after' => 'Tanggal usulan harus setelah sekarang.']);
+        ]);
         $this->service->act($request->user(), $importantRequest, $data['action'], $data);
 
         return $this->show($request, $importantRequest->refresh());

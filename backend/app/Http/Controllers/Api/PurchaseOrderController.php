@@ -267,14 +267,12 @@ class PurchaseOrderController extends Controller
     public function complete(Request $request, PurchaseOrder $purchaseOrder): JsonResponse
     {
         $data = $request->validate([
-            // the PO's vendor: for every line that does not pick its own
-            'vendor_id' => ['nullable', 'integer', 'exists:vendors,id'],
+            // one PO = one vendor
+            'vendor_id' => ['required', 'integer', 'exists:vendors,id'],
             'expected_date' => ['nullable', 'date'],
             'notes' => ['nullable', 'string', 'max:2000'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.id' => ['required', 'integer'],
-            // one PO number, items of several vendors
-            'lines.*.vendor_id' => ['nullable', 'integer', 'exists:vendors,id'],
             'lines.*.qty' => ['required', 'numeric', 'min:0.01'],
             'lines.*.unit_price' => ['required', 'numeric', 'min:0'],
         ]);

@@ -148,7 +148,7 @@ export function ApprovalPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] lg:items-start">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] lg:items-start">
         {/* the inbox */}
         <Card className={cn('overflow-hidden', selected && 'hidden lg:block')}>
           {loading && <div className="flex justify-center py-16"><Loader2 className="size-6 animate-spin text-muted-foreground" /></div>}
@@ -235,7 +235,7 @@ function Facts({ items }: { items: [string, React.ReactNode][] }) {
 }
 
 /** numericFrom: the first column of numbers (right-aligned); default the last two */
-function LinesTable({ head, rows, numericFrom }: { head: string[]; rows: React.ReactNode[][]; numericFrom?: number }) {
+function LinesTable({ head, rows, numericFrom, rowClass }: { head: string[]; rows: React.ReactNode[][]; numericFrom?: number; rowClass?: (i: number) => string | false | undefined }) {
   const from = numericFrom ?? head.length - 2
   return (
     <div className="overflow-x-auto border-t">
@@ -244,7 +244,7 @@ function LinesTable({ head, rows, numericFrom }: { head: string[]; rows: React.R
           <tr>{head.map((h, i) => <th key={h} className={cn('px-4 py-2 font-medium', i > 0 && i >= from && 'text-right')}>{h}</th>)}</tr>
         </thead>
         <tbody className="divide-y">
-          {rows.map((r, i) => <tr key={i} className="align-top">{r.map((c, j) => <td key={j} className={cn('px-4 py-2.5', j > 0 && j >= from && 'whitespace-nowrap text-right tabular-nums')}>{c}</td>)}</tr>)}
+          {rows.map((r, i) => <tr key={i} className={cn('align-top transition-colors', rowClass?.(i))}>{r.map((c, j) => <td key={j} className={cn('px-4 py-2.5', j > 0 && j >= from && 'whitespace-nowrap text-right tabular-nums')}>{c}</td>)}</tr>)}
         </tbody>
       </table>
     </div>
@@ -272,7 +272,48 @@ function RequestDetail({ task, r, gudang, lines, history, onBack, onDone }: {
   const waiting = openF ? lines.filter((l) => !openF.lines.some((fl) => fl.line_id === l.id)) : lines
   // Manager / Direktur do not change quantities: "Revisi" sends it to admin gudang to revise them
   const approvedOf = (l: ApprovalRow['lines'][number]) => Number(l.approved_qty ?? l.qty)
+  // what the requester asked, in their own words: picking one lights up its verified items on the right
+  const askedOf = (l: ApprovalRow['lines'][number]) => (l.deskripsi_peminta ?? l.deskripsi_barang ?? '').trim()
+  const keyOf = (l: ApprovalRow['lines'][number]) => askedOf(l).toLowerCase()
+  const asked = Object.values(r.lines.reduce<Record<string, { key: string; name: string; qty: number; unit: string | null; n: number }>>((m, l) => {
+    const k = keyOf(l)
+    m[k] ??= { key: k, name: askedOf(l), qty: 0, unit: l.satuan, n: 0 }
+    m[k].qty += Number(l.qty)
+    m[k].n += 1
+    return m
+  }, {}))
+  const [picked, setPicked] = useState<string | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
+  const lit = hovered ?? picked
+  const litClass = (l: ApprovalRow['lines'][number]) => lit !== null && (keyOf(l) === lit ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : 'opacity-60')
+  const itemCell = (l: ApprovalRow['lines'][number]) => (
+    <div>
+      <div className="font-medium">{l.item_description ?? l.deskripsi_barang}</div>
+      <div className="text-xs text-muted-foreground">{[l.kode_barang, l.satuan, l.item_description && l.item_description !== askedOf(l) ? `diminta: ${askedOf(l)}` : null, l.note].filter(Boolean).join(' · ')}</div>
+    </div>
+  )
   return (
+    <div className="grid gap-4 xl:grid-cols-[15rem_minmax(0,1fr)] xl:items-start">
+    <Card className="overflow-hidden xl:sticky xl:top-20">
+      <div className="border-b px-4 py-3">
+        <div className="text-sm font-semibold">Permintaan</div>
+        <div className="text-xs text-muted-foreground">Nama dari peminta · klik untuk menyorot itemnya</div>
+      </div>
+      <ul className="divide-y">
+        {asked.map((a) => (
+          <li key={a.key}>
+            <button type="button" onClick={() => setPicked(picked === a.key ? null : a.key)} onMouseEnter={() => setHovered(a.key)} onMouseLeave={() => setHovered(null)}
+              aria-pressed={picked === a.key}
+              className={cn('flex w-full items-start justify-between gap-2 px-4 py-2.5 text-left text-sm transition-colors hover:bg-blue-50',
+                picked === a.key && 'bg-blue-100 font-semibold text-blue-900 shadow-[inset_3px_0_0_theme(colors.blue.500)]')}>
+              <span className="min-w-0 break-words">{a.name}</span>
+              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{fmtQty(a.qty)} {a.unit ?? ''}{a.n > 1 ? ` · ${a.n} item` : ''}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {picked && <button type="button" className="w-full border-t px-4 py-2 text-left text-xs text-primary hover:underline" onClick={() => setPicked(null)}>Tampilkan semua</button>}
+    </Card>
     <Card className="overflow-hidden">
       <DetailHeader task={task} onBack={onBack} link={`/item-requests/${r.id}`}
         actions={!history && (
@@ -305,9 +346,9 @@ function RequestDetail({ task, r, gudang, lines, history, onBack, onDone }: {
       )}
       {gudang ? (!openF && waiting.length > 0 && (
         <>
-          <LinesTable head={['Barang', 'Stok', 'Disetujui', 'Sisa', 'Gambar']} numericFrom={1}
+          <LinesTable head={['Item terverifikasi', 'Stok', 'Disetujui', 'Sisa', 'Gambar']} numericFrom={1} rowClass={(i) => litClass(waiting[i])}
           rows={waiting.map((l) => [
-            <div><div className="font-medium">{l.deskripsi_barang}</div><div className="text-xs text-muted-foreground">{[l.kode_barang, l.satuan, l.note].filter(Boolean).join(' · ')}</div></div>,
+            itemCell(l),
             <StockCell onHand={l.on_hand} free={l.available} />,
             fmtQty(l.approved_qty), fmtQty(l.remaining),
             <LineImagesCell requestId={r.id} lineId={l.id} slots={l.images} />,
@@ -315,13 +356,13 @@ function RequestDetail({ task, r, gudang, lines, history, onBack, onDone }: {
         </>
       )) : (
         // what the stock can give now (NPBG) and what has to be bought (PPB) — decided by the system after the Direktur
-        <LinesTable head={['Barang', 'Diminta', 'Disetujui', 'Stok', 'NPBG', 'PPB', 'Gambar']} numericFrom={1}
+        <LinesTable head={['Item terverifikasi', 'Diminta', 'Disetujui', 'Stok', 'NPBG', 'PPB', 'Gambar']} numericFrom={1} rowClass={(i) => litClass(lines[i])}
           rows={lines.map((l) => {
             const need = approvedOf(l)
             const stock = Math.max(0, l.available ?? 0)
             const npbg = l.item_id ? Math.min(need, stock) : 0
             return [
-              <div><div className="font-medium">{l.deskripsi_barang}</div><div className="text-xs text-muted-foreground">{[l.kode_barang, l.satuan, l.note].filter(Boolean).join(' · ')}</div></div>,
+              itemCell(l),
               fmtQty(l.qty),
               fmtQty(need),
               <StockCell onHand={l.on_hand} free={l.available} tone={l.available == null ? 'text-muted-foreground' : stock >= need ? 'text-emerald-700' : 'text-red-600'} />,
@@ -336,6 +377,7 @@ function RequestDetail({ task, r, gudang, lines, history, onBack, onDone }: {
         <p className="border-t px-4 py-3 text-xs text-muted-foreground">Langkah terakhir: {stepText(r.last_step.action, r.last_step.note, r.last_step.stage)}{isAutoApproval(r.last_step.note) ? '' : ` · ${r.last_step.user_name ?? 'Sistem'}`}{r.last_step.note && !isAutoApproval(r.last_step.note) ? ` · ${r.last_step.note}` : ''}</p>
       )}
     </Card>
+    </div>
   )
 }
 

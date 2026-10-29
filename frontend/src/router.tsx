@@ -22,6 +22,7 @@ import { StockCardProjectsPage } from '@/pages/StockCardProjectsPage'
 import { StockCardProjectPage } from '@/pages/StockCardProjectPage'
 import { PoDetailPage } from '@/pages/PoDetailPage'
 import { PoListPage } from '@/pages/PoListPage'
+import { PoDraftPage } from '@/pages/PoDraftPage'
 import { PpbDetailPage } from '@/pages/PpbDetailPage'
 import { PpbListPage } from '@/pages/PpbListPage'
 import { ReportsPage } from '@/pages/ReportsPage'
@@ -160,6 +161,11 @@ export const router = createBrowserRouter([
               { path: '/ppb', element: <PpbListPage /> },
               { path: '/ppb/:id', element: <PpbDetailPage /> },
             ],
+          },
+          {
+            // Draft PO: approved PPB items, vendor prices compared, picked into one PO per vendor
+            element: <RequirePermission permission={['po.create']} />,
+            children: [{ path: '/purchase-orders/draft', element: <PoDraftPage /> }],
           },
           {
             element: <RequirePermission permission="po.view" />,

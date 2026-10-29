@@ -268,7 +268,10 @@ class PpbApprovalService
                     $this->addToPoTable($noPpb, $user);
                     $next = 'DISETUJUI';
                 } else {
-                    $made = PurchaseOrder::where('from_ppb_approval', $noPpb)->whereNotIn('status', [self::WAITING, 'CANCELLED'])->exists();
+                    // a PO already made of its lines (from the Draft PO, maybe together with other PPBs' lines)
+                    $made = PurchaseOrderItem::whereIn('approved_ppb_id', Ppb::where('no_ppb', $noPpb)->pluck('id'))
+                        ->whereHas('purchaseOrder', fn ($p) => $p->whereNotIn('status', [self::WAITING, 'CANCELLED']))->exists()
+                        || PurchaseOrder::where('from_ppb_approval', $noPpb)->whereNotIn('status', [self::WAITING, 'CANCELLED'])->exists();
                     if ($made) {
                         throw ValidationException::withMessages(['status' => 'PO untuk PPB ini sudah dibuat — batalkan PO-nya dulu.']);
                     }
@@ -292,7 +295,7 @@ class PpbApprovalService
             'MENUNGGU_DIREKTUR' => NotificationDispatcher::toPermission('ppb.approve_director', 'ppb', 'info', "PPB {$noPpb} menunggu approval Direktur",
                 "Sudah disetujui Manager ({$user->name}).", $link, $user->id),
             'DISETUJUI' => NotificationDispatcher::toPermission('po.create', 'ppb', 'success', "PPB {$noPpb} disetujui",
-                'Lengkapi vendor & harga di tabel PO (Menunggu PO) untuk jadi PO STOCKWISE.', $link, $user->id),
+                'Barangnya masuk Draft PO: bandingkan harga vendor, lalu pilih barang untuk dijadikan PO.', '/purchase-orders/draft', $user->id),
             'DITOLAK' => NotificationDispatcher::toPermission('ppb.create', 'ppb', 'warning', "PPB {$noPpb} ditolak",
                 "{$user->name}: ".trim((string) $note), $link, $user->id),
             default => null,
@@ -310,10 +313,14 @@ class PpbApprovalService
         }
     }
 
-    /** The PO-table entry an approval made for this PPB: still "Menunggu PO", or the STOCKWISE PO it became (null = none). */
+    /** The PO-table entry an approval made for this PPB: still "Menunggu PO", or the STOCKWISE PO its lines became (null = none). */
     public static function poEntry(string $noPpb): ?PurchaseOrder
     {
-        return PurchaseOrder::where('from_ppb_approval', $noPpb)->where('status', '!=', 'CANCELLED')->orderByDesc('id')->first(['id', 'number', 'status']);
+        $lines = Ppb::where('no_ppb', $noPpb)->pluck('id');
+
+        return PurchaseOrder::where('status', '!=', 'CANCELLED')
+            ->where(fn ($q) => $q->where('from_ppb_approval', $noPpb)->orWhereHas('items', fn ($i) => $i->whereIn('approved_ppb_id', $lines)))
+            ->orderByDesc('id')->first(['id', 'number', 'status']);
     }
 
     /** APPROVE: the PPB lines no PO covers yet go into the PO table as one "Menunggu PO" entry. */
@@ -351,9 +358,14 @@ class PpbApprovalService
         }
     }
 
-    /** REJECT after an approval: its "Menunggu PO" entry leaves the PO table. */
+    /** REJECT after an approval: its "Menunggu PO" lines leave the PO table (and the Draft PO). */
     private function removeFromPoTable(string $noPpb): void
     {
+        $waiting = PurchaseOrderItem::whereIn('approved_ppb_id', Ppb::where('no_ppb', $noPpb)->pluck('id'))->where('line_status', self::WAITING)
+            ->whereHas('purchaseOrder', fn ($p) => $p->where('status', self::WAITING));
+        $poIds = (clone $waiting)->pluck('purchase_order_id')->unique();
+        $waiting->delete();
+        PurchaseOrder::whereIn('id', $poIds)->where('status', self::WAITING)->doesntHave('items')->get()->each->delete();
         PurchaseOrder::where('from_ppb_approval', $noPpb)->where('status', self::WAITING)->get()->each->delete();
     }
 

@@ -120,6 +120,8 @@ class PurchaseOrderService
      * Purchasing completes the entry (vendor, prices, maybe quantities) — or fixes a PO the Direktur
      * sent back — and submits it to the Direktur.
      *
+     * One PO = one vendor: every line is bought from vendor_id.
+     *
      * @param  array{vendor_id:int, expected_date?:?string, notes?:?string, lines:list<array{id:int, qty:float, unit_price:float}>}  $data
      */
     public function complete(PurchaseOrder $po, User $user, array $data): PurchaseOrder
@@ -130,7 +132,6 @@ class PurchaseOrderService
                 throw ValidationException::withMessages(['status' => 'PO ini tidak bisa diubah lagi.']);
             }
             $items = $po->items()->get()->keyBy('id');
-            $vendors = [];
             foreach ($data['lines'] as $i => $in) {
                 $line = $items->get($in['id']) ?? throw ValidationException::withMessages(["lines.{$i}.id" => 'Baris ini bukan bagian dari PO.']);
                 $qty = round((float) $in['qty'], 2);
@@ -138,19 +139,14 @@ class PurchaseOrderService
                 if ($qty <= 0) {
                     throw ValidationException::withMessages(["lines.{$i}.qty" => "Jumlah {$line->description_raw} harus lebih dari 0."]);
                 }
-                // its own vendor (one PO number may hold items of several vendors), else the PO's
-                $vendorId = $in['vendor_id'] ?? $data['vendor_id'] ?? null;
-                if (! $vendorId) {
-                    throw ValidationException::withMessages(["lines.{$i}.vendor_id" => "Pilih vendor untuk {$line->description_raw}."]);
-                }
-                $vendors[] = (int) $vendorId;
+                // one PO = one vendor: every line is bought from the PO's vendor
+                $vendorId = (int) $data['vendor_id'];
                 $line->update(['qty' => $qty, 'unit_price' => $price, 'line_total' => round($qty * $price, 2), 'line_status' => 'PENDING', 'vendor_id' => $vendorId]);
             }
             $subtotal = (float) $po->items()->sum('line_total');
             $first = $po->status === PpbApprovalService::WAITING;
             $po->update([
-                // the PO's vendor: the one most of its lines are bought from
-                'vendor_id' => $data['vendor_id'] ?? collect($vendors)->countBy()->sortDesc()->keys()->first(),
+                'vendor_id' => (int) $data['vendor_id'],
                 'expected_date' => $data['expected_date'] ?? $po->expected_date,
                 'notes' => array_key_exists('notes', $data) && $data['notes'] !== null ? $data['notes'] : $po->notes,
                 'date' => $first ? now()->toDateString() : $po->date,
@@ -275,6 +271,12 @@ class PurchaseOrderService
     }
 
     private function notifyDirector(PurchaseOrder $po, User $user): void
+    {
+        self::notifyDirectorOf($po, $user);
+    }
+
+    /** a STOCKWISE PO waits for the Direktur (also a PO made from the Draft PO) */
+    public static function notifyDirectorOf(PurchaseOrder $po, User $user): void
     {
         NotificationDispatcher::toPermission(self::DIRECTOR, 'po', 'info', "PO {$po->number} menunggu approval Direktur",
             'Total Rp '.number_format((float) $po->total, 0, ',', '.').'.', "/purchase-orders/{$po->id}", $user->id);

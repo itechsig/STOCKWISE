@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { AlertTriangle, Ban, CheckCircle2, Loader2, Copy, Lock, PackageCheck, Plus, Search, Undo2 } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, ClipboardList, Loader2, Copy, Lock, MessageSquare, PackageCheck, Plus, Search, Undo2 } from 'lucide-react'
 import { toast, invalidTo } from '@/lib/notify'
 import { useAuth } from '@/auth/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
@@ -37,37 +37,61 @@ const num = (v: string) => Number(v.trim().replace(',', '.'))
 const clean = (t: string | null | undefined) => (t ? t.replace(/\s*—\s*/g, ', ') : t)
 
 interface Choice {
-  /** the Master Produk items selected (can be multiple for one request line) */
+  /** the Master Produk items picked for this requested item (one or more, in the order picked) */
   items: StockRecommendation[]
-  /** the quantity for each selected item */
+  /** how many of each picked item (its id → qty as typed) */
   qtys: Record<number, string>
-  /** total quantity proposed for approval (sum of all selected items) */
-  totalQty: string
 }
 
-/** Stock of a master item against what was asked, as a short colored text. */
+/** "1,5" / "1.5" → 1.5; 0 when empty or not a number (a qty field) */
+const qtyOf = (v: string | undefined) => { const n = num(v ?? ''); return Number.isFinite(n) && n > 0 ? n : 0 }
+const round2 = (n: number) => Math.round(n * 100) / 100
+/** what a master item can give from stock now (unknown stock counts as none) */
+const inStock = (item: StockRecommendation) => (item.stock_known ? Math.max(0, item.available ?? 0) : 0)
+
+/**
+ * How many of each picked item: from stock first (in the order picked), the rest on the first item —
+ * that part is bought (Draft PPB) after the approval. Verifying is only "which item, how many".
+ */
+function distribute(items: StockRecommendation[], needed: number): Record<number, string> {
+  const qtys: Record<number, string> = {}
+  if (items.length === 0) return qtys
+  if (items.length === 1) return { [items[0].id]: String(needed) }
+  let left = needed
+  for (const it of items) {
+    const take = round2(Math.min(left, Math.floor(inStock(it))))
+    qtys[it.id] = String(take)
+    left = round2(left - take)
+  }
+  qtys[items[0].id] = String(round2(qtyOf(qtys[items[0].id]) + left))
+  return qtys
+}
+
+/** The total picked, and what the stock gives now (NPBG) vs what is bought (Draft PPB). */
+function split(choice: Choice) {
+  let total = 0, stock = 0
+  for (const it of choice.items) {
+    const q = qtyOf(choice.qtys[it.id])
+    total += q
+    stock += Math.min(q, inStock(it))
+  }
+  return { total: round2(total), stock: round2(stock), buy: round2(total - stock) }
+}
+
+/** Stock of a master item, as a short colored text. */
 function stockText(item: StockRecommendation, qty: number) {
   if (!item.stock_known) return <span className="text-muted-foreground">stok ?</span>
   const a = item.available ?? 0
   return <span className={a >= qty ? 'text-emerald-700' : a > 0 ? 'text-amber-700' : 'text-red-600'}>stok {fmtQty(a)}</span>
 }
 
-/** What the system will do after the approval, from the stock now (it is checked again then). */
-function outlook(items: StockRecommendation[], totalQty: number): { text: string; cls: string } {
-  if (items.length === 0) return { text: 'Pilih barang dari Master Produk, belum ada? Tambahkan dulu.', cls: 'text-amber-700' }
-  const totalAvailable = items.reduce((sum, item) => sum + (item.stock_known ? Math.max(0, item.available ?? 0) : 0), 0)
-  if (totalAvailable >= totalQty) return { text: 'Stok cukup → NPBG', cls: 'text-emerald-700' }
-  if (totalAvailable > 0) return { text: `Stok kurang → NPBG ${fmtQty(totalAvailable)} + PPB ${fmtQty(totalQty - totalAvailable)}`, cls: 'text-amber-700' }
-  return { text: 'Stok kosong → PPB', cls: 'text-red-600' }
-}
-
-/** One requested item to verify: which warehouse item it is, and how many to propose. */
 /** The master item already saved on a line, as a pick option. */
 const savedItem = (l: ItemRequestLine): StockRecommendation | null => (l.item_id ? {
-  id: l.item_id, code: l.kode_barang ?? '', description: l.deskripsi_peminta ?? l.item_description ?? l.deskripsi_barang, unit: l.satuan,
+  id: l.item_id, code: l.kode_barang ?? '', description: l.item_description ?? l.deskripsi_barang, unit: l.satuan,
   available: l.available ?? null, stock_known: l.available != null, score: 0,
 } : null)
 
+/** One requested item to verify: which Master Produk item(s) and how many — stock decides NPBG / PPB later. */
 function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
   line: ItemRequestLine; requestId: number; choice: Choice; onChange: (c: Choice) => void
   /** save the pick at once (the Item table below follows) */
@@ -80,85 +104,28 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
   const [searching, setSearching] = useState(false)
   const [adding, setAdding] = useState(false)
   const options = extra && !line.recommendations.some((r) => r.id === extra.id) ? [...line.recommendations, extra] : line.recommendations
+  const needed = Number(line.qty)
 
   const toggleItem = (item: StockRecommendation) => {
-    const isSelected = choice.items.some((i) => i.id === item.id)
-    let newItems: StockRecommendation[]
-    if (isSelected) {
-      newItems = choice.items.filter((i) => i.id !== item.id)
-    } else {
-      newItems = [...choice.items, item]
-      if (item.id !== line.item_id) onPick(item.id)
-    }
-    // Distribute qty proportionally among selected items to match total needed
-    const totalNeeded = Number(line.qty)
-    const newQtys: Record<number, string> = {}
-    
-    if (newItems.length === 0) {
-      onChange({ ...choice, items: newItems, qtys: newQtys, totalQty: '0' })
-      return
-    }
-    
-    // Calculate total available stock across all selected items
-    const totalAvailable = newItems.reduce((sum, i) => sum + (i.stock_known ? Math.max(0, i.available ?? 0) : 0), 0)
-    
-    // If enough stock, distribute to match exactly what's needed
-    if (totalAvailable >= totalNeeded) {
-      // Preserve existing qtys where possible, then distribute remaining
-      let remaining = totalNeeded
-      newItems.forEach((item, idx) => {
-        const existingQty = choice.qtys[item.id] ? Math.round(Number(choice.qtys[item.id])) : 0
-        const available = item.stock_known ? Math.floor(Math.max(0, item.available ?? 0)) : 0
-        // Use existing qty if it's valid and not more than available, otherwise use available
-        const qty = idx === newItems.length - 1 ? remaining : Math.min(existingQty || available, remaining)
-        const roundedQty = Math.round(qty)
-        newQtys[item.id] = String(roundedQty)
-        remaining -= roundedQty
-      })
-    } else {
-      // Not enough stock - give each item its full available stock (integer), the rest will be bought (PPB)
-      newItems.forEach((item, idx) => {
-        const available = item.stock_known ? Math.floor(Math.max(0, item.available ?? 0)) : 0
-        const qty = available
-        newQtys[item.id] = String(qty)
-      })
-    }
-
-    const newTotal = Object.values(newQtys).reduce((sum, q) => sum + Number(q), 0)
-    onChange({ ...choice, items: newItems, qtys: newQtys, totalQty: String(Math.round(newTotal)) })
+    const on = choice.items.some((i) => i.id === item.id)
+    const items = on ? choice.items.filter((i) => i.id !== item.id) : [...choice.items, item]
+    if (!on && item.id !== line.item_id && choice.items.length === 0) onPick(item.id)
+    onChange({ items, qtys: distribute(items, needed) })
   }
-
   const fromLookup = (it: ItemLookupResult) => {
     const r: StockRecommendation = { id: it.id, code: it.code, description: it.description, unit: it.unit, available: it.available, stock_known: it.stock_known, score: 0 }
     setExtra(r)
     setSearching(false)
-    toggleItem(r)
+    if (!choice.items.some((i) => i.id === r.id)) toggleItem(r)
   }
+  // any amount: more than the stock is fine, the rest is bought after the approval
+  const setQty = (itemId: number, v: string) => onChange({ ...choice, qtys: { ...choice.qtys, [itemId]: v.replace(/[^\d.,]/g, '') } })
 
-  const updateQty = (itemId: number, qty: string) => {
-    const numQty = num(qty)
-    if (!Number.isFinite(numQty) || numQty < 0) return
-
-    const item = choice.items.find((i) => i.id === itemId)
-    if (item && item.stock_known && item.available != null && numQty > item.available) {
-      // Cap at available stock
-      qty = String(Math.round(item.available))
-    }
-
-    // Always round to integer
-    qty = String(Math.round(numQty))
-
-    const newQtys = { ...choice.qtys, [itemId]: qty }
-    const newTotal = Object.values(newQtys).reduce((sum, q) => sum + (Number.isFinite(num(q)) ? Math.round(num(q)) : 0), 0)
-    onChange({ ...choice, qtys: newQtys, totalQty: String(Math.round(newTotal)) })
-  }
-
-  const totalNeeded = Number(line.qty)
-  const totalSelected = choice.items.reduce((sum, i) => sum + Number(choice.qtys[i.id] || 0), 0)
-  const plan = outlook(choice.items, Math.round(totalSelected))
+  const sum = split(choice)
+  const diff = round2(sum.total - needed)
 
   return (
-    <Card className="space-y-4 p-4">
+    <Card className="space-y-4 rounded-2xl p-4 shadow-sm sm:p-5">
       <div className="flex items-baseline justify-between gap-3">
         <div className="flex min-w-0 items-start gap-3">
           <div className="min-w-0 break-words text-base font-semibold">{line.deskripsi_peminta ?? line.deskripsi_barang}</div>
@@ -170,7 +137,7 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
 
       {/* which warehouse item */}
       <div className="-mb-2 flex items-center justify-between text-xs text-muted-foreground">
-        <span>Barang di Master Produk (pilih satu atau lebih untuk memenuhi permintaan)</span>
+        <span>Barang di Master Produk, boleh lebih dari satu (mis. buku Sidu + buku Sinar)</span>
         {saving ? <span className="flex items-center gap-1"><Loader2 className="size-3 animate-spin" /> Menyimpan…</span>
           : choice.items.length > 0 ? <span className="flex items-center gap-1 text-emerald-700"><CheckCircle2 className="size-3" /> {choice.items.length} barang dipilih</span>
           : <span>Pilih barang untuk memenuhi permintaan</span>}
@@ -181,23 +148,31 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
           {options.length === 0 && <p className="px-3 py-3 text-sm text-muted-foreground">Tidak ada rekomendasi, cari barang lain atau tambahkan ke Master Produk.</p>}
           {options.map((r, i) => {
             const isSelected = choice.items.some((item) => item.id === r.id)
-            const qty = choice.qtys[r.id] || String(Math.round(Math.min(totalNeeded, r.available ?? totalNeeded)))
+            const q = qtyOf(choice.qtys[r.id])
+            const fromStock = Math.min(q, inStock(r))
             return (
-              <label key={r.id} className={cn('flex cursor-pointer items-center gap-3 px-3 py-2.5 text-sm hover:bg-muted/50', isSelected && 'bg-primary/5')}>
-                <input type="checkbox" className="size-4 shrink-0 accent-primary" checked={isSelected} onChange={() => toggleItem(r)} />
-                <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{i + 1}</span>
-                <span className="min-w-0 flex-1 break-words">{r.description}<span className="ml-1.5 font-mono text-xs text-muted-foreground">{r.code}</span></span>
-                <span className="shrink-0 text-xs">{stockText(r, totalNeeded)}</span>
+              <div key={r.id} className={cn('flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-sm', isSelected ? 'bg-primary/5' : 'hover:bg-muted/50')}>
+                <label className="flex min-w-0 flex-1 basis-60 cursor-pointer items-center gap-3">
+                  <input type="checkbox" className="size-4 shrink-0 accent-primary" checked={isSelected} onChange={() => toggleItem(r)} />
+                  <span className="w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{i + 1}</span>
+                  <span className="min-w-0 flex-1 break-words">{r.description}<span className="ml-1.5 font-mono text-xs text-muted-foreground">{r.code}</span></span>
+                  <span className="shrink-0 text-xs">{stockText(r, isSelected ? q : needed)}</span>
+                </label>
                 {isSelected && (
-                  <Input
-                    className="h-7 w-20 text-right text-xs tabular-nums"
-                    inputMode="numeric"
-                    value={qty}
-                    onChange={(e) => updateQty(r.id, e.target.value)}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+                  // phone: its own row under the name; wider: on the right
+                  <div className="ml-14 flex items-center gap-2 sm:ml-0">
+                    <Input className="h-8 w-20 text-right tabular-nums" inputMode="decimal" aria-label={`Jumlah ${r.description}`}
+                      value={choice.qtys[r.id] ?? ''} onChange={(e) => setQty(r.id, e.target.value)} />
+                    <span className="w-36 text-xs leading-tight text-muted-foreground">
+                      {q <= 0 ? 'isi jumlahnya' : <>
+                        {fromStock > 0 && <span className="text-emerald-700">{fmtQty(fromStock)} dari stok</span>}
+                        {fromStock > 0 && q > fromStock && ' · '}
+                        {q > fromStock && <span className="text-amber-700">{fmtQty(round2(q - fromStock))} dibeli</span>}
+                      </>}
+                    </span>
+                  </div>
                 )}
-              </label>
+              </div>
             )
           })}
         </div>
@@ -222,22 +197,29 @@ function OpenLine({ line, requestId, choice, onChange, onPick, saving }: {
         onCreated={(it) => {
           const r: StockRecommendation = { id: it.id, code: it.code, description: it.description, unit: it.unit?.code ?? null, available: 0, stock_known: true, score: 0 }
           setExtra(r)
-          toggleItem(r)
+          if (!choice.items.some((i) => i.id === r.id)) toggleItem(r)
         }} />
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-        <span className="text-muted-foreground">Total dipilih:</span>
-        <span className={cn('font-semibold tabular-nums', totalSelected === totalNeeded ? 'text-emerald-700' : totalSelected > totalNeeded ? 'text-red-600' : 'text-amber-700')}>
-          {fmtQty(totalSelected)} {line.satuan ?? ''}
-        </span>
-        <span className="text-xs text-muted-foreground">dari {fmtQty(totalNeeded)} {line.satuan ?? ''}</span>
-        {totalSelected !== totalNeeded && (
-          <span className="text-xs font-medium text-red-600">
-            {totalSelected > totalNeeded ? `Kelebihan ${fmtQty(totalSelected - totalNeeded)}` : `Kurang ${fmtQty(totalNeeded - totalSelected)}`}
+      {choice.items.length === 0 ? (
+        <p className="text-sm text-amber-700">Pilih barang dari Master Produk. Belum ada? Tambahkan dulu.</p>
+      ) : (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-muted/40 px-3 py-2 text-sm">
+          <span>
+            <span className="text-muted-foreground">Total </span>
+            <span className={cn('font-semibold tabular-nums', diff === 0 ? 'text-emerald-700' : 'text-red-600')}>{fmtQty(sum.total)}</span>
+            <span className="text-muted-foreground"> / {fmtQty(needed)} {line.satuan ?? ''}</span>
+            {diff !== 0 && <span className="ml-1.5 text-xs font-medium text-red-600">{diff > 0 ? `lebih ${fmtQty(diff)}` : `kurang ${fmtQty(-diff)}`}</span>}
           </span>
-        )}
-        <span className={cn('basis-full text-xs font-medium', plan.cls)}>Perkiraan setelah approval: {plan.text}</span>
-      </div>
+          {sum.stock > 0 && <span className="text-xs text-emerald-700">Dari stok {fmtQty(sum.stock)} → NPBG</span>}
+          {sum.buy > 0 && <span className="text-xs text-amber-700">Dibeli {fmtQty(sum.buy)} → Draft PPB</span>}
+          {choice.items.length > 1 && (
+            <button type="button" className="ml-auto text-xs font-medium text-primary hover:underline" onClick={() => onChange({ ...choice, qtys: distribute(choice.items, needed) })}>
+              Bagi ulang otomatis
+            </button>
+          )}
+          <span className="basis-full text-xs text-muted-foreground">Perkiraan dari stok sekarang; dicek lagi setelah approval. Yang kurang otomatis masuk Draft PPB.</span>
+        </div>
+      )}
     </Card>
   )
 }
@@ -315,7 +297,7 @@ function LineName({ line, requestId }: { line: ItemRequestLine; requestId: numbe
  * The items: asked → approved → handed over → left, the stock now, the status (a table; cards on a phone).
  * Manager / Direktur do not change quantities here: they send the request back to admin gudang.
  */
-function ItemsTable({ req, selectedLineId, onSelectLine }: { req: ItemRequestDetail; selectedLineId: number | null; onSelectLine: (id: number) => void }) {
+function ItemsTable({ req, onSelectLine }: { req: ItemRequestDetail; onSelectLine: (id: number) => void }) {
   const decided = req.lines.some((l) => l.approved_qty != null)
   // during the Manager / Direktur approval nothing is handed over yet: no Diserahkan / Sisa columns
   const handing = decided && !['APPROVAL_MANAGER', 'APPROVAL_DIREKTUR'].includes(req.status)
@@ -381,7 +363,7 @@ function ItemsTable({ req, selectedLineId, onSelectLine }: { req: ItemRequestDet
           </thead>
           <tbody className="divide-y">
             {req.lines.map((l, i) => (
-              <tr key={l.id} className={cn('align-top cursor-pointer hover:bg-muted/50', selectedLineId === l.id && 'bg-primary/5')} onClick={() => l.decision === null && onSelectLine(l.id)}>
+              <tr key={l.id} className={cn('align-top', l.decision === null && 'cursor-pointer hover:bg-muted/50')} onClick={() => l.decision === null && onSelectLine(l.id)}>
                 <td className="px-4 py-3 tabular-nums text-muted-foreground">{i + 1}</td>
                 <td className="px-3 py-3"><LineName line={l} requestId={req.id} /></td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{fmtQty(l.qty)}</td>
@@ -616,12 +598,12 @@ function HandoverProof({ req }: { req: ItemRequestDetail }) {
   )
 }
 
-/** A titled ERP panel. */
+/** A titled card (Classroom-like: rounded, a plain title). */
 function Panel({ title, aside, children, className }: { title: string; aside?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return (
-    <Card className={cn('overflow-hidden', className)}>
-      <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-4 py-2.5">
-        <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
+    <Card className={cn('overflow-hidden rounded-2xl shadow-sm', className)}>
+      <div className="flex items-center justify-between gap-2 border-b px-4 py-3 sm:px-5">
+        <h2 className="text-[15px] font-medium">{title}</h2>
         {aside}
       </div>
       {children}
@@ -689,7 +671,6 @@ export function ItemRequestDetailPage() {
   const canProcess = !!req && hasPermission('item_request.process') && ['MENUNGGU', 'DIPROSES', 'PERLU_PERBAIKAN'].includes(req.status)
   const open = useMemo(() => (canProcess && req ? req.lines.filter((l) => l.decision === null) : []), [req, canProcess])
   const [choices, setChoices] = useState<Record<number, Choice>>({})
-  const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
   const [pelanggan, setPelanggan] = useState('')
   const [tipe, setTipe] = useState<'Penjualan' | 'Non Penjualan'>('Non Penjualan')
   const [err, setErr] = useState<string | null>(null)
@@ -697,7 +678,11 @@ export function ItemRequestDetailPage() {
   // default per line: the best recommendation, the quantity asked
   useEffect(() => {
     // the item already saved on the line; nothing picked for the admin (no blue row before a click)
-    setChoices((prev) => Object.fromEntries(open.map((l) => [l.id, prev[l.id] ?? { items: savedItem(l) ? [savedItem(l)!] : [], qtys: {}, totalQty: String(Number(l.qty)) }])))
+    setChoices((prev) => Object.fromEntries(open.map((l) => {
+      if (prev[l.id]) return [l.id, prev[l.id]]
+      const items = savedItem(l) ? [savedItem(l)!] : []
+      return [l.id, { items, qtys: distribute(items, Number(l.qty)) }]
+    })))
   }, [open])
   useEffect(() => { if (req) setPelanggan((p) => p || req.divisi || req.requester_name || '') }, [req])
   // opened from the Approval page's "Siapkan barang"
@@ -721,24 +706,14 @@ export function ItemRequestDetailPage() {
     if (unmatched) return invalidTo(setErr, `"${unmatched.deskripsi_peminta ?? unmatched.deskripsi_barang}" belum dipilih dari Master Produk, kalau belum ada, tambahkan dulu.`)
     if (!pelanggan.trim()) return invalidTo(setErr, 'Isi Pelanggan untuk NPBG.')
     
-    // Validate total quantity exactly matches the request
-    const badQty = open.find((l) => {
-      const total = Math.round(num(choices[l.id]?.totalQty ?? '0'))
-      const needed = Number(l.qty)
-      return !Number.isFinite(total) || total <= 0 || total !== needed
-    })
-    if (badQty) return invalidTo(setErr, `Jumlah "${badQty.deskripsi_peminta ?? badQty.deskripsi_barang}" harus sama persis dengan yang diminta (${fmtQty(badQty.qty)} ${badQty.satuan ?? ''}). Saat ini: ${fmtQty(Math.round(num(choices[badQty.id]?.totalQty ?? '0')))}.`)
-    
-    // For now, we'll take the first selected item (or need to adjust API to support multiple)
-    // The backend needs to be updated to handle multiple items per line
+    // the picked items together: exactly what was asked (the stock decides NPBG / Draft PPB after the approval)
+    const empty = open.find((l) => choices[l.id]?.items.some((it) => qtyOf(choices[l.id].qtys[it.id]) <= 0))
+    if (empty) return invalidTo(setErr, `Isi jumlah setiap barang untuk "${empty.deskripsi_peminta ?? empty.deskripsi_barang}", atau hapus centangnya.`)
+    const badQty = open.find((l) => split(choices[l.id]).total !== Number(l.qty))
+    if (badQty) return invalidTo(setErr, `Jumlah "${badQty.deskripsi_peminta ?? badQty.deskripsi_barang}" harus ${fmtQty(badQty.qty)} ${badQty.satuan ?? ''} (yang diminta). Saat ini: ${fmtQty(split(choices[badQty.id]).total)}. Stok kurang tidak apa-apa: sisanya dibeli lewat Draft PPB.`)
+
     proc.mutate({
-      lines: Object.fromEntries(open.map((l) => {
-        const choice = choices[l.id]
-        const items = choice?.items ?? []
-        // Take the first item for now (API may need update for multiple)
-        const item = items.length > 0 ? items[0] : null
-        return [l.id, { item_id: item?.id ?? null, qty: Math.round(num(choice?.totalQty ?? '0')) }]
-      })),
+      lines: Object.fromEntries(open.map((l) => [l.id, { items: choices[l.id].items.map((it) => ({ item_id: it.id, qty: qtyOf(choices[l.id].qtys[it.id]) })) }])),
       npbg: { pelanggan: pelanggan.trim(), tipe_npbg: tipe },
     }, { onError: (e) => setErr(apiErrorMessage(e)) })
   }
@@ -751,157 +726,195 @@ export function ItemRequestDetailPage() {
 
   const overdue = !!req.needed_date && !['SELESAI', 'DITOLAK', 'DIBATALKAN'].includes(req.status) && new Date(req.needed_date) < new Date(new Date().toDateString())
 
+  const matched = open.filter((l) => (choices[l.id]?.items.length ?? 0) > 0).length
+  const toLine = (lineId: number) => document.getElementById(`verify-${lineId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // the round icon: green when done, red when rejected, grey when cancelled
+  const dot = req.status === 'SELESAI' ? 'bg-emerald-500' : req.status === 'DITOLAK' ? 'bg-red-500' : req.status === 'DIBATALKAN' ? 'bg-slate-400' : 'bg-primary'
+  const title = [...new Set(req.lines.map((l) => l.deskripsi_peminta ?? l.deskripsi_barang))]
+
   return (
-    <div className="mx-auto max-w-7xl space-y-4 pb-6">
+    <div className="mx-auto max-w-6xl pb-8">
       <BackLink to="/item-requests" label="Request Barang" />
 
-      {/* Object page header: the document, its key facts and where it is in the flow */}
-      <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 p-4 sm:p-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0 space-y-1.5">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Request Barang · {req.form_label}</div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-mono text-xl font-semibold sm:text-2xl">{req.number}</h1>
+      {/*
+        Classroom's assignment page: the left column is the request (title, what is asked, its progress,
+        the activity); the right card is "your part" — what this user does now. On a phone the card comes
+        right after the title, so the action is never far.
+      */}
+      <div className="mt-3 grid gap-5 lg:grid-cols-[minmax(0,1fr)_20rem]">
+        <header className="flex gap-3 border-b-2 border-primary/70 pb-4 sm:gap-4">
+          <span className={cn('mt-0.5 flex size-11 shrink-0 items-center justify-center rounded-full text-white sm:size-12', dot)}><ClipboardList className="size-6" /></span>
+          <div className="min-w-0 flex-1 space-y-1">
+            <h1 className="break-words text-2xl font-normal leading-tight sm:text-[28px]">
+              {title.slice(0, 3).join(', ')}{title.length > 3 && <span className="text-muted-foreground"> +{title.length - 3} lainnya</span>}
+            </h1>
+            <div className="text-sm text-muted-foreground">
+              {[req.requester_name, req.divisi].filter(Boolean).join(' · ')} · {fmtDateTime(req.created_at)}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <span className="font-mono text-sm font-semibold">{req.number}</span>
               <RequestStatusBadge status={req.status} label={req.status_label} />
               {req.urgency === 'URGENT' && <span className="inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200"><AlertTriangle className="size-3.5" />Urgent</span>}
+              <span className="text-xs text-muted-foreground">{req.form_label}{req.form_detail_label && req.form_detail ? ` · ${req.form_detail_label}: ${req.form_detail}` : ''}</span>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {req.track_token && <Button size="sm" variant="outline" onClick={copyLink}><Copy className="size-4" /> Salin link status</Button>}
-            {canProcess && (
-              <Button size="sm" variant="outline" className={req.urgency === 'URGENT' ? '' : 'text-red-700 hover:text-red-800'} disabled={urgency.isPending}
-                onClick={() => urgency.mutate(req.urgency === 'URGENT' ? null : 'URGENT')}>
-                <AlertTriangle className="size-4" /> {req.urgency === 'URGENT' ? 'Lepas urgent' : 'Tandai urgent'}
-              </Button>
-            )}
-            {canCancel && (
-              <Button size="sm" variant="outline" className="text-destructive hover:text-destructive" disabled={cancel.isPending}
-                onClick={async () => { if ((await confirmDialog('Batalkan request ini?'))) cancel.mutate() }}>
-                <Ban className="size-4" /> Batalkan
-              </Button>
-            )}
+          {/* like Classroom's "Tenggat" */}
+          <div className="hidden shrink-0 text-right sm:block">
+            <div className="text-xs text-muted-foreground">Dibutuhkan</div>
+            <div className={cn('text-sm font-medium', overdue && 'text-red-600')}>{req.needed_date ? fmtDate(req.needed_date) : 'Tanpa tanggal'}</div>
+            {overdue && <div className="text-xs font-medium text-red-600">Terlambat</div>}
           </div>
-        </div>
-        <dl className="grid grid-cols-2 gap-px border-y bg-border sm:grid-cols-3 lg:grid-cols-6">
-          <Fact label="Pemohon" value={req.requester_name ?? '-'} sub={req.requester_contact} />
-          <Fact label="Divisi" value={req.divisi || '-'} />
-          <Fact label={req.form_detail_label || 'Form'} value={req.form_detail_label ? req.form_detail || '-' : req.form_label} />
-          <Fact label="Dibutuhkan" value={req.needed_date ? fmtDate(req.needed_date) : '-'} tone={overdue ? 'text-red-600' : undefined} sub={overdue ? 'Lewat tanggal' : null} />
-          <Fact label="Jumlah item" value={`${req.lines.length} barang`} />
-          <Fact label="Dibuat" value={fmtDateTime(req.created_at)} sub={req.source === 'LINK' ? 'via link form' : 'via aplikasi'} />
-        </dl>
-        <div className="px-4 py-4 sm:px-5"><StepsBar steps={req.timeline} /></div>
-      </Card>
+        </header>
 
-      {/* the one thing this user does now */}
-      {myTurn && (
-        <Card className="flex flex-col gap-3 border-primary/40 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="text-sm font-semibold">{req.can_handover ? 'Siapkan & serah terima barang' : req.can_fulfill ? 'Siapkan barang dari stok' : req.approve_as === 'DIREKTUR' && req.status === 'APPROVAL_MANAGER' ? 'Menunggu approval Manager. Anda bisa langsung approve sebagai Direktur' : `Menunggu approval Anda (${info.who})`}</div>
-            <p className="text-xs text-muted-foreground">{req.can_approve ? `${info.hint} Ada yang kurang sesuai? Klik Revisi, admin gudang yang memperbaiki.` : info.hint}</p>
+        {/* ---- your part (right, sticky) */}
+        <aside className="space-y-4 lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <div className="space-y-4 lg:sticky lg:top-20">
+            <Card className="overflow-hidden rounded-2xl shadow-md">
+              <div className="space-y-3 p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="text-lg font-normal">Tindakan Anda</h2>
+                  {req.needed_date && <span className={cn('text-xs sm:hidden', overdue ? 'font-medium text-red-600' : 'text-muted-foreground')}>{overdue ? 'Terlambat · ' : 'Perlu '}{fmtDate(req.needed_date)}</span>}
+                </div>
+
+                {open.length > 0 ? (
+                  // admin gudang: verify, then send to approval
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex justify-between text-sm"><span>Barang dicocokkan</span><span className="tabular-nums font-medium">{matched} / {open.length}</span></div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary transition-all" style={{ width: `${(matched / open.length) * 100}%` }} /></div>
+                      <p className="mt-1.5 text-xs text-muted-foreground">Pilih barang Master Produk & jumlahnya di bagian Verifikasi barang. Stok kurang tidak apa-apa: setelah approval sisanya otomatis ke Draft PPB.</p>
+                    </div>
+                    <div className="space-y-1"><Label htmlFor="pr-pelanggan" className="text-xs">Pelanggan NPBG</Label><Input id="pr-pelanggan" value={pelanggan} maxLength={200} onChange={(e) => setPelanggan(e.target.value)} /></div>
+                    <div className="space-y-1"><Label htmlFor="pr-tipe" className="text-xs">Tipe NPBG</Label>
+                      <Select id="pr-tipe" value={tipe} onChange={(e) => setTipe(e.target.value as typeof tipe)}><option>Non Penjualan</option><option>Penjualan</option></Select>
+                    </div>
+                    {err && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p>}
+                    <Button className="w-full" onClick={submit} disabled={proc.isPending}>
+                      <CheckCircle2 className="size-4" /> {proc.isPending ? 'Mengirim…' : 'Kirim ke approval'}
+                    </Button>
+                  </div>
+                ) : myTurn ? (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-sm font-medium">{req.can_handover ? 'Siapkan & serah terima barang' : req.can_fulfill ? 'Siapkan barang dari stok' : req.approve_as === 'DIREKTUR' && req.status === 'APPROVAL_MANAGER' ? 'Menunggu Manager — Anda bisa langsung approve sebagai Direktur' : `Menunggu approval Anda (${info.who})`}</div>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{req.can_approve ? `${info.hint} Ada yang kurang sesuai? Klik Revisi, admin gudang yang memperbaiki.` : info.hint}</p>
+                    </div>
+                    <div className="[&_button]:w-full [&>div]:flex-col [&>div]:items-stretch">
+                      <ApprovalActions req={req} handover={draft} onPrepare={() => prepareRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-3 rounded-xl bg-muted/50 p-3 text-sm">
+                    <CheckCircle2 className={cn('mt-0.5 size-4 shrink-0', req.status === 'SELESAI' ? 'text-emerald-600' : 'text-muted-foreground')} />
+                    <div>
+                      <div className="font-medium">{req.status === 'SELESAI' ? 'Selesai — barang sudah diterima' : 'Tidak ada yang perlu Anda lakukan'}</div>
+                      <p className="text-xs text-muted-foreground">{info ? `Sekarang: ${info.who ? `${info.who} — ` : ''}${req.status_label}` : req.status_label}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {(req.track_token || canProcess || canCancel) && (
+                <div className="flex flex-wrap gap-1 border-t bg-muted/20 px-2 py-2">
+                  {req.track_token && <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={copyLink}><Copy className="size-3.5" /> Salin link status</Button>}
+                  {canProcess && (
+                    <Button size="sm" variant="ghost" className={cn('h-8 text-xs', req.urgency !== 'URGENT' && 'text-red-700 hover:text-red-800')} disabled={urgency.isPending}
+                      onClick={() => urgency.mutate(req.urgency === 'URGENT' ? null : 'URGENT')}>
+                      <AlertTriangle className="size-3.5" /> {req.urgency === 'URGENT' ? 'Lepas urgent' : 'Tandai urgent'}
+                    </Button>
+                  )}
+                  {canCancel && (
+                    <Button size="sm" variant="ghost" className="h-8 text-xs text-destructive hover:text-destructive" disabled={cancel.isPending}
+                      onClick={async () => { if ((await confirmDialog('Batalkan request ini?'))) cancel.mutate() }}>
+                      <Ban className="size-3.5" /> Batalkan
+                    </Button>
+                  )}
+                </div>
+              )}
+            </Card>
+
+            <Card className="hidden overflow-hidden rounded-2xl lg:block">
+              <InfoList req={req} />
+            </Card>
           </div>
-          <ApprovalActions req={req} handover={draft}
-            onPrepare={() => prepareRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
-        </Card>
-      )}
+        </aside>
 
-      {sentBack && (
-        <Card className="flex gap-3 border-orange-300 bg-orange-50 p-4 text-sm">
-          <Undo2 className="mt-0.5 size-4 shrink-0 text-orange-700" />
-          <div>
-            <div className="font-semibold text-orange-900">Dikembalikan untuk perbaikan{sentBack.user_name ? ` oleh ${sentBack.user_name}` : ''}</div>
-            <p className="text-orange-900/80">{clean(sentBack.note)}</p>
-            {canProcess && <p className="mt-1 text-xs text-orange-900/70">Verifikasi ulang barang di bawah, lalu kirim. Request kembali ke persetujuan.</p>}
-          </div>
-        </Card>
-      )}
-
-      {/* the items: asked → approved → given (NPBG) / bought (PPB) */}
-      <Panel title={`Item (${req.lines.length})`}>
-        <ItemsTable req={req} selectedLineId={selectedLineId} onSelectLine={setSelectedLineId} />
-        {/* the requester's images, for everyone handling it until it is done */}
-        {(req.images?.length ?? 0) > 0 && (
-          <div className="space-y-2 border-t px-4 py-3">
-            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Gambar dari peminta ({req.images!.length})</div>
-            <RequestImages requestId={req.id} slots={req.images} size="size-24" />
-          </div>
-        )}
-      </Panel>
-
-      {/* admin gudang: verify each open item */}
-      {open.length > 0 && (
-        <Panel title={`Verifikasi item (${open.length})`} className="border-primary/30">
-          <p className="border-b bg-primary/5 px-4 py-2.5 text-sm">
-            <b>Klik item di tabel</b> untuk memverifikasi. Cocokkan barang dengan <b>Master Produk</b> dan jumlahnya.
-            Bisa pilih <b>beberapa barang</b> untuk satu permintaan (misal: Sidu 3 + Sinarmas 2 untuk buku tulis 5).
-            Belum ada di master? Tambahkan dulu (stok 0).
-            Setelah disetujui Manager & Direktur, <b>sistem</b> mengecek stok: cukup → NPBG, kurang → NPBG sebagian + sisanya Draft PPB, kosong → Draft PPB.
-          </p>
-          {selectedLineId !== null && choices[selectedLineId] ? (
-            <div className="bg-muted/20 p-3">
-              <OpenLine
-                key={selectedLineId}
-                line={open.find((l) => l.id === selectedLineId)!}
-                requestId={req.id}
-                choice={choices[selectedLineId]}
-                onChange={(c) => setChoices((x) => ({ ...x, [selectedLineId]: c }))}
-                saving={match.isPending && match.variables?.lineId === selectedLineId}
-                onPick={(itemId) => match.mutate({ lineId: selectedLineId, itemId }, { onError: (e) => setErr(apiErrorMessage(e)) })}
-              />
-            </div>
-          ) : (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              Klik salah satu item di tabel di atas untuk memulai verifikasi
-            </div>
-          )}
-          <div className="space-y-3 border-t p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:max-w-2xl">
-              <div className="space-y-1"><Label htmlFor="pr-pelanggan">Pelanggan NPBG</Label><Input id="pr-pelanggan" value={pelanggan} maxLength={200} onChange={(e) => setPelanggan(e.target.value)} /></div>
-              <div className="space-y-1"><Label htmlFor="pr-tipe">Tipe NPBG</Label>
-                <Select id="pr-tipe" value={tipe} onChange={(e) => setTipe(e.target.value as typeof tipe)}><option>Non Penjualan</option><option>Penjualan</option></Select>
+        {/* ---- the request (left) */}
+        <main className="min-w-0 space-y-5 lg:col-start-1 lg:row-start-2">
+          {sentBack && (
+            <div className="flex gap-3 rounded-2xl border border-orange-300 bg-orange-50 p-4 text-sm">
+              <Undo2 className="mt-0.5 size-4 shrink-0 text-orange-700" />
+              <div>
+                <div className="font-semibold text-orange-900">Dikembalikan untuk perbaikan{sentBack.user_name ? ` oleh ${sentBack.user_name}` : ''}</div>
+                <p className="text-orange-900/80">{clean(sentBack.note)}</p>
+                {canProcess && <p className="mt-1 text-xs text-orange-900/70">Verifikasi ulang barang di bawah, lalu kirim. Request kembali ke persetujuan.</p>}
               </div>
             </div>
-            {err && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{err}</p>}
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <span className="text-sm text-muted-foreground">
-                {open.filter((l) => choices[l.id]?.items.length > 0).length} dari {open.length} barang sudah dicocokkan
-              </span>
-              <Button onClick={submit} disabled={proc.isPending}>
-                <CheckCircle2 className="size-4" /> {proc.isPending ? 'Mengirim…' : 'Kirim ke approval'}
-              </Button>
-            </div>
-          </div>
-        </Panel>
-      )}
+          )}
 
-      <FulfillPanel req={req} panelRef={prepareRef} />
-      <div id="konfirmasi" ref={confirmRef} className="scroll-mt-4"><Fulfillments req={req} draft={draft} onDraft={setDraft} /></div>
-      <HandoverProof req={req} />
+          {req.note && (
+            <div className="whitespace-pre-wrap rounded-2xl bg-muted/40 px-4 py-3 text-sm"><span className="mb-0.5 block text-xs text-muted-foreground">Catatan peminta</span>{req.note}</div>
+          )}
 
-      {/* like a chatter: what happened, beside the remaining details */}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)] lg:items-start">
-        <Panel title="Riwayat aktivitas"><Activity req={req} /></Panel>
-        <Panel title="Informasi lainnya">
-          <dl className="divide-y px-4 text-sm">
-            {req.requester_contact && <Row label="Kontak">{req.requester_contact}</Row>}
-            <Row label="Dikirim via">{req.source === 'LINK' ? 'Link form' : 'Aplikasi'}</Row>
-            {req.requester_location && <Row label="Jaringan"><span className={req.requester_location === 'Di Luar Kantor' ? 'text-amber-700' : ''}>{req.requester_location}</span></Row>}
-            <Row label="Diverifikasi">{req.processed_at ? `${fmtDateTime(req.processed_at)}${req.processed_by_name ? ` · ${req.processed_by_name}` : ''}` : 'Belum'}</Row>
-          </dl>
-          {req.note && <div className="border-t px-4 py-3 text-sm"><div className="mb-1 text-muted-foreground">Catatan</div><p className="whitespace-pre-wrap">{req.note}</p></div>}
-        </Panel>
+          <Card className="rounded-2xl px-4 py-4 shadow-sm sm:px-5"><StepsBar steps={req.timeline} /></Card>
+
+          {/* admin gudang: every item to verify, one card each — no hunting for it in the table */}
+          {open.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-end justify-between gap-2 px-1">
+                <h2 className="text-[15px] font-medium">Verifikasi barang</h2>
+                <span className="text-xs text-muted-foreground">{matched} dari {open.length} dicocokkan</span>
+              </div>
+              {open.map((l, i) => choices[l.id] && (
+                <div key={l.id} id={`verify-${l.id}`} className="scroll-mt-20">
+                  <div className="mb-1 px-1 text-xs text-muted-foreground">Barang {i + 1} dari {open.length}</div>
+                  <OpenLine line={l} requestId={req.id} choice={choices[l.id]}
+                    onChange={(c) => setChoices((x) => ({ ...x, [l.id]: c }))}
+                    saving={match.isPending && match.variables?.lineId === l.id}
+                    onPick={(itemId) => match.mutate({ lineId: l.id, itemId }, { onError: (e) => setErr(apiErrorMessage(e)) })} />
+                </div>
+              ))}
+            </section>
+          )}
+
+          {/* what was asked → approved → given (NPBG) / bought (PPB) */}
+          <Panel title={`Barang yang diminta (${req.lines.length})`}>
+            <ItemsTable req={req} onSelectLine={toLine} />
+            {(req.images?.length ?? 0) > 0 && (
+              <div className="space-y-2 border-t px-4 py-3 sm:px-5">
+                <div className="text-xs text-muted-foreground">Gambar dari peminta ({req.images!.length})</div>
+                <RequestImages requestId={req.id} slots={req.images} size="size-24" />
+              </div>
+            )}
+          </Panel>
+
+          <FulfillPanel req={req} panelRef={prepareRef} />
+          <div id="konfirmasi" ref={confirmRef} className="scroll-mt-20"><Fulfillments req={req} draft={draft} onDraft={setDraft} /></div>
+          <HandoverProof req={req} />
+
+          {/* like Classroom's class comments: what happened, in order */}
+          <Panel title="Aktivitas" aside={<MessageSquare className="size-4 text-muted-foreground" />}><Activity req={req} /></Panel>
+
+          <Card className="overflow-hidden rounded-2xl lg:hidden"><InfoList req={req} /></Card>
+        </main>
       </div>
     </div>
   )
 }
 
-/** One key fact in the header (SAP-style header facet). */
-function Fact({ label, value, sub, tone }: { label: string; value: React.ReactNode; sub?: string | null; tone?: string }) {
+/** The remaining details of the request (contact, how it came in, who verified). */
+function InfoList({ req }: { req: ItemRequestDetail }) {
   return (
-    <div className="min-w-0 bg-card px-4 py-3 sm:px-5">
-      <dt className="truncate text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn('mt-0.5 break-words text-sm font-semibold', tone)}>{value}</dd>
-      {sub && <dd className={cn('truncate text-xs', tone ?? 'text-muted-foreground')}>{sub}</dd>}
-    </div>
+    <>
+      <div className="border-b px-4 py-3 text-[15px] font-medium">Informasi</div>
+      <dl className="divide-y px-4 text-sm">
+        <Row label="Pemohon">{req.requester_name ?? '-'}</Row>
+        {req.requester_contact && <Row label="Kontak">{req.requester_contact}</Row>}
+        <Row label="Divisi">{req.divisi || '-'}</Row>
+        <Row label="Dikirim via">{req.source === 'LINK' ? 'Link form' : 'Aplikasi'}</Row>
+        {req.requester_location && <Row label="Jaringan"><span className={req.requester_location === 'Di Luar Kantor' ? 'text-amber-700' : ''}>{req.requester_location}</span></Row>}
+        <Row label="Diverifikasi">{req.processed_at ? `${fmtDateTime(req.processed_at)}${req.processed_by_name ? ` · ${req.processed_by_name}` : ''}` : 'Belum'}</Row>
+      </dl>
+    </>
   )
 }

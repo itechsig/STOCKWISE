@@ -61,15 +61,21 @@ class ImportantRequest extends Model
         return $this->hasMany(ImportantRequestActivity::class);
     }
 
-    /** Overdue: past its deadline and not over — an indicator, not a status. */
+    /** recipients' parts still to hand in (see ImportantRequestService) */
+    public const TO_DO = ['DITUGASKAN', 'REVISI'];
+
+    /** Late ("terlambat"): past its deadline with work not handed in yet — an indicator, not a status. */
     public function isOverdue(): bool
     {
-        return $this->deadline !== null && ! in_array($this->status, self::CLOSED, true) && $this->deadline->isPast();
+        return $this->deadline !== null && ! in_array($this->status, self::CLOSED, true) && $this->deadline->isPast()
+            && ($this->relationLoaded('assignees') ? $this->assignees->contains(fn ($a) => in_array($a->status, self::TO_DO, true))
+                : $this->assignees()->whereIn('status', self::TO_DO)->exists());
     }
 
     public function scopeOverdue(Builder $q): Builder
     {
-        return $q->whereNotIn('status', self::CLOSED)->whereNotNull('deadline')->where('deadline', '<', now());
+        return $q->whereNotIn('status', self::CLOSED)->whereNotNull('deadline')->where('deadline', '<', now())
+            ->whereHas('assignees', fn ($a) => $a->whereIn('status', self::TO_DO));
     }
 
     /** What this user may see: theirs (made / assigned), everything with view_all; drafts only their maker. */

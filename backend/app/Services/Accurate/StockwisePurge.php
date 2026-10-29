@@ -12,8 +12,9 @@ use Illuminate\Support\Facades\Storage;
 
 /**
  * Accurate-only mode (config stockwise.accurate_only): transactions happen in Accurate only and
- * STOCKWISE just reads them, so at the end of every Accurate sync whatever was MADE in STOCKWISE is
- * removed and the data is pure Accurate again:
+ * STOCKWISE just reads them, so at the end of the SCHEDULED night sync (stockwise.accurate_only_purge_window,
+ * WIB — the day's syncs and every manual sync keep it, so what is tried out stays until the night) whatever was
+ * MADE in STOCKWISE is removed and the data is pure Accurate again:
  *   Request Barang (+ its NPBG / serah terima / photos), manual NPBG / PPB / RI, STOCKWISE POs and
  *   "Menunggu PO" entries, Draft PPB, PPB / PO approval logs, purchase returns, manual stock opname,
  *   the stock movements they made (the stock goes back to Accurate's qty), Master Produk made here and
@@ -29,6 +30,27 @@ class StockwisePurge
     public static function enabled(): bool
     {
         return (bool) config('stockwise.accurate_only', false);
+    }
+
+    /** a manual Agent run started from the web: its batch is a manual sync (AgentRunController → startForAgent()) */
+    public const MANUAL_AGENT_RUN = 'agent-run:manual-full';
+
+    /**
+     * Purge on this sync: Accurate-only mode, the night, and a scheduled sync — a manual one (the "Sync
+     * Accurate" button, or the Agent started from the web: created_by is set) never removes test data.
+     */
+    public static function dueNow(?\App\Models\SyncBatch $batch = null): bool
+    {
+        return self::enabled() && ($batch?->created_by === null) && self::isNight(now());
+    }
+
+    /** Inside the purge window ("18:00-06:00", may run past midnight) in WIB. */
+    public static function isNight(\DateTimeInterface $at): bool
+    {
+        [$from, $to] = array_map('trim', explode('-', (string) config('stockwise.accurate_only_purge_window', '18:00-06:00')) + [1 => '06:00']);
+        $t = \Illuminate\Support\Carbon::instance($at)->timezone((string) config('stockwise.accurate_only_purge_timezone', 'Asia/Jakarta'))->format('H:i');
+
+        return $from <= $to ? ($t >= $from && $t < $to) : ($t >= $from || $t < $to);
     }
 
     /** @return array<string, int> what was removed, per kind */

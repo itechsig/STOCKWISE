@@ -15,24 +15,30 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * The workflow of an Important Request.
+ * The workflow of an Important Request — simple, like an assignment in Google Classroom.
  *
- *   request:  DRAFT → MENUNGGU_KONFIRMASI → DITERIMA → IN_PROGRESS → MENUNGGU_REVIEW → SELESAI
- *             (+ TERKENDALA, REVISI, DIBATALKAN; overdue is an indicator, never a status)
- *   recipient: MENUNGGU_KONFIRMASI → DITERIMA → IN_PROGRESS ⇄ TERKENDALA → MENUNGGU_REVIEW → SELESAI / REVISI → IN_PROGRESS
+ *   recipient: DITUGASKAN → (submit) DISERAHKAN, or DISERAHKAN_TERLAMBAT after the deadline
+ *              → the creator approves: SELESAI, or returns it: REVISI → submit again
+ *              (a submission not reviewed yet may be withdrawn: back to DITUGASKAN / REVISI)
+ *   request:   DRAFT → DITUGASKAN → MENUNGGU_REVIEW (a result waits) → SELESAI (every part approved)
+ *              (+ DIBATALKAN). Not handed in after the deadline: "terlambat" — an indicator, not a status.
  *
- * The creator reviews (approves or asks a revision); a recipient never approves their own result.
- * INDIVIDUAL: each recipient submits their own part, the request is done when every part is.
- * COLLECTIVE: one result for all — a submission by any recipient moves them all, so does its review.
- * Without required approval a submission completes the recipient's part at once (logged OTOMATIS).
- * The request status follows its recipients (recompute()).
+ * Done only when approved: the creator reviews; a recipient never approves their own result.
+ * Every recipient hands in their own work (one request, several people = an assignment to a class).
  */
 class ImportantRequestService
 {
     public const STATUS_LABELS = [
-        'DRAFT' => 'Draft', 'MENUNGGU_KONFIRMASI' => 'Menunggu konfirmasi', 'DITERIMA' => 'Diterima', 'IN_PROGRESS' => 'In progress',
-        'TERKENDALA' => 'Terkendala', 'MENUNGGU_REVIEW' => 'Menunggu review', 'REVISI' => 'Revisi', 'SELESAI' => 'Selesai', 'DIBATALKAN' => 'Dibatalkan',
+        'DRAFT' => 'Draft', 'DITUGASKAN' => 'Ditugaskan', 'MENUNGGU_REVIEW' => 'Perlu ditinjau', 'SELESAI' => 'Selesai', 'DIBATALKAN' => 'Dibatalkan',
+        // a recipient's own part
+        'DISERAHKAN' => 'Diserahkan', 'DISERAHKAN_TERLAMBAT' => 'Diserahkan terlambat', 'REVISI' => 'Perlu revisi',
     ];
+
+    /** a recipient's part handed in, waiting for the review */
+    public const HANDED_IN = ['DISERAHKAN', 'DISERAHKAN_TERLAMBAT'];
+
+    /** a recipient's part still to hand in */
+    public const TO_DO = ['DITUGASKAN', 'REVISI'];
 
     public function __construct(private DocumentNumberService $numbers, private ImportantRequestFiles $files) {}
 
@@ -47,12 +53,11 @@ class ImportantRequestService
                 'number' => $this->numbers->nextShort('IMP'),
                 'title' => trim($data['title']), 'description' => trim($data['description']),
                 'priority' => $data['priority'] ?? 'MEDIUM', 'category' => $data['category'] ?? null,
-                'deadline' => $data['deadline'] ?? null, 'requires_approval' => $data['requires_approval'] ?? true,
-                'assignment_mode' => $data['assignment_mode'] ?? 'INDIVIDUAL', 'note' => $data['note'] ?? null,
+                'deadline' => $data['deadline'] ?? null, 'requires_approval' => true, 'assignment_mode' => 'INDIVIDUAL', 'note' => $data['note'] ?? null,
                 'status' => 'DRAFT', 'created_by' => $user->id,
             ]);
             foreach ($ids as $id) {
-                $r->assignees()->create(['user_id' => $id]);
+                $r->assignees()->create(['user_id' => $id, 'status' => 'DITUGASKAN']);
             }
             $files = $this->files->claim($user, $data['attachments'] ?? [], $r, 'ORIGINAL');
             $this->log($r, $user, 'CREATED', ['assignees' => $this->names($ids), 'files' => array_map(fn ($f) => $f->original_name, $files)]);
@@ -72,7 +77,7 @@ class ImportantRequestService
             $this->assertNotClosed($r, allowDraft: true);
             $fields = ['title', 'description', 'priority', 'category', 'note'];
             if ($r->status === 'DRAFT') {
-                $fields = [...$fields, 'deadline', 'requires_approval', 'assignment_mode'];
+                $fields = [...$fields, 'deadline'];
             }
             $changes = [];
             foreach ($fields as $f) {
@@ -92,7 +97,7 @@ class ImportantRequestService
                 }
                 $r->assignees()->whereIn('user_id', $removed)->delete();
                 foreach ($added as $id) {
-                    $r->assignees()->create(['user_id' => $id]);
+                    $r->assignees()->create(['user_id' => $id, 'status' => 'DITUGASKAN']);
                 }
                 if ($added || $removed) {
                     $this->log($r, $user, 'ASSIGNEES_CHANGED', ['ditambah' => $this->names($added), 'dihapus' => $this->names($removed)]);
@@ -127,7 +132,7 @@ class ImportantRequestService
             if (! $r->deadline) {
                 throw ValidationException::withMessages(['deadline' => 'Isi deadline sebelum mengirim.']);
             }
-            $r->update(['status' => 'MENUNGGU_KONFIRMASI', 'sent_at' => now()]);
+            $r->update(['status' => 'DITUGASKAN', 'sent_at' => now()]);
             $this->log($r, $user, 'SENT');
 
             return $r;
@@ -166,7 +171,7 @@ class ImportantRequestService
 
     // ------------------------------------------------------------------ recipient steps
 
-    /** confirm | start | progress | blocker | submit | extension */
+    /** submit (hand in: a note and / or files) | unsubmit (withdraw a hand-in not reviewed yet) */
     public function act(User $user, ImportantRequest $request, string $action, array $data = []): ImportantRequest
     {
         $notifyCreator = null;
@@ -177,53 +182,37 @@ class ImportantRequestService
             if (! $a) {
                 abort(403, 'Anda bukan penerima request ini.');
             }
-            $need = fn (array $from, string $msg) => in_array($a->status, $from, true) ?: throw ValidationException::withMessages(['status' => $msg]);
-            switch ($action) {
-                case 'confirm':
-                    $need(['MENUNGGU_KONFIRMASI'], 'Tugas ini sudah dikonfirmasi.');
-                    $a->update(['status' => 'DITERIMA', 'confirmed_at' => now()]);
-                    $this->log($r, $user, 'CONFIRMED');
-                    $notifyCreator = ['info', "{$user->name} menerima {$r->number}", $r->title];
-                    break;
-                case 'start':
-                    $need(['DITERIMA', 'REVISI', 'TERKENDALA'], 'Tugas ini tidak bisa dimulai dari status sekarang.');
-                    $from = $a->status;
-                    $a->update(['status' => 'IN_PROGRESS', 'started_at' => $a->started_at ?? now(), 'blocker_note' => $from === 'TERKENDALA' ? null : $a->blocker_note]);
-                    $this->log($r, $user, $from === 'TERKENDALA' ? 'RESUMED' : 'STARTED');
-                    if ($from === 'TERKENDALA') {
-                        $notifyCreator = ['info', "{$r->number} dilanjutkan", "{$user->name}: kendala teratasi, pekerjaan dilanjutkan."];
-                    }
-                    break;
-                case 'progress':
-                    $need(['DITERIMA', 'IN_PROGRESS', 'REVISI'], 'Update progres hanya saat tugas dikerjakan.');
-                    $p = max(0, min(100, (int) ($data['progress'] ?? $a->progress)));
-                    $a->update(['progress' => $p, 'status' => 'IN_PROGRESS', 'started_at' => $a->started_at ?? now()]);
-                    $this->comment($user, $r, 'PROGRESS', "Progres {$p}%".(filled($data['note'] ?? null) ? ': '.trim($data['note']) : ''));
-                    $this->log($r, $user, 'PROGRESS', ['progress' => $p]);
-                    $notifyCreator = ['info', "Progres {$r->number}: {$p}%", "{$user->name}".(filled($data['note'] ?? null) ? ': '.trim($data['note']) : '')];
-                    break;
-                case 'blocker':
-                    $need(['DITERIMA', 'IN_PROGRESS', 'REVISI'], 'Kendala hanya dilaporkan saat tugas dikerjakan.');
-                    $reason = trim((string) ($data['reason'] ?? ''));
-                    $reason !== '' ?: throw ValidationException::withMessages(['reason' => 'Tulis kendalanya.']);
-                    $a->update(['status' => 'TERKENDALA', 'blocker_note' => mb_substr($reason, 0, 1000)]);
-                    $this->comment($user, $r, 'BLOCKER', "Kendala: {$reason}");
-                    $this->log($r, $user, 'BLOCKED', ['alasan' => $reason]);
-                    $notifyCreator = ['warning', "{$r->number} terkendala", "{$user->name}: {$reason}"];
-                    if (! empty($data['proposed_deadline'])) {
-                        $this->extension($user, $r, $data['proposed_deadline'], $reason);
-                    }
-                    break;
-                case 'extension':
-                    $need(['DITERIMA', 'IN_PROGRESS', 'REVISI', 'TERKENDALA'], 'Perpanjangan hanya untuk tugas yang dikerjakan.');
-                    $this->extension($user, $r, $data['proposed_deadline'] ?? null, trim((string) ($data['reason'] ?? '')));
-                    break;
-                case 'submit':
-                    $need(['DITERIMA', 'IN_PROGRESS', 'REVISI'], 'Hasil hanya bisa dikirim saat tugas dikerjakan.');
-                    $this->submit($user, $r, $a, $data, $notifyCreator);
-                    break;
-                default:
-                    abort(404);
+            if ($action === 'submit') {
+                if (! in_array($a->status, self::TO_DO, true)) {
+                    throw ValidationException::withMessages(['status' => 'Tugas ini sudah diserahkan.']);
+                }
+                $note = trim((string) ($data['note'] ?? ''));
+                $tokens = $data['attachments'] ?? [];
+                if ($note === '' && ! $tokens) {
+                    throw ValidationException::withMessages(['attachments' => 'Lampirkan file hasil atau tulis catatan hasil pekerjaan.']);
+                }
+                $late = $r->deadline !== null && now()->greaterThan($r->deadline);
+                $round = 1 + (int) ImportantRequestSubmission::where('assignee_id', $a->id)->where('status', '!=', 'DITARIK')->count();
+                $sub = ImportantRequestSubmission::create([
+                    'important_request_id' => $r->id, 'assignee_id' => $a->id, 'user_id' => $user->id, 'round' => $round,
+                    'note' => $note ?: null, 'status' => 'MENUNGGU_REVIEW',
+                ]);
+                $files = $this->files->claim($user, $tokens, $r, $round > 1 ? 'REVISION' : 'SUBMISSION', submissionId: $sub->id);
+                $a->update(['status' => $late ? 'DISERAHKAN_TERLAMBAT' : 'DISERAHKAN', 'progress' => 100, 'submitted_at' => now()]);
+                $this->log($r, $user, 'SUBMITTED', ['putaran' => $round, 'terlambat' => $late, 'files' => array_map(fn ($f) => $f->original_name, $files)]);
+                $notifyCreator = ['info', ($late ? 'Diserahkan terlambat: ' : 'Diserahkan: ').$r->number,
+                    "{$user->name} menyerahkan hasil".($round > 1 ? ' revisi' : '').'. Tinjau dan setujui atau kembalikan.'];
+            } elseif ($action === 'unsubmit') {
+                $sub = ImportantRequestSubmission::where(['assignee_id' => $a->id, 'status' => 'MENUNGGU_REVIEW'])->lockForUpdate()->latest('id')->first();
+                if (! $sub || ! in_array($a->status, self::HANDED_IN, true)) {
+                    throw ValidationException::withMessages(['status' => 'Tidak ada hasil yang bisa ditarik (sudah ditinjau?).']);
+                }
+                $sub->update(['status' => 'DITARIK']);
+                $returned = ImportantRequestSubmission::where('assignee_id', $a->id)->where('status', 'REVISI')->exists();
+                $a->update(['status' => $returned ? 'REVISI' : 'DITUGASKAN', 'submitted_at' => null]);
+                $this->log($r, $user, 'UNSUBMITTED', ['putaran' => $sub->round]);
+            } else {
+                abort(404);
             }
             $this->recompute($r);
 
@@ -234,46 +223,6 @@ class ImportantRequestService
         }
 
         return $r;
-    }
-
-    private function extension(User $user, ImportantRequest $r, mixed $proposed, string $reason): void
-    {
-        if (! $proposed || $reason === '') {
-            throw ValidationException::withMessages(['proposed_deadline' => 'Isi tanggal usulan dan alasannya.']);
-        }
-        $date = Carbon::parse($proposed);
-        $this->comment($user, $r, 'BLOCKER', 'Mengajukan perpanjangan deadline ke '.$date->format('d/m/Y H:i').": {$reason}");
-        $this->log($r, $user, 'EXTENSION_REQUESTED', ['usulan' => $date->toIso8601String(), 'alasan' => $reason]);
-        $this->notify([$r->created_by], $r, 'warning', "Perpanjangan deadline {$r->number}", "{$user->name} mengusulkan ".$date->format('d/m/Y H:i').": {$reason}", $user->id);
-    }
-
-    private function submit(User $user, ImportantRequest $r, ImportantRequestAssignee $a, array $data, ?array &$notifyCreator): void
-    {
-        $note = trim((string) ($data['note'] ?? ''));
-        $tokens = $data['attachments'] ?? [];
-        if ($note === '' && ! $tokens) {
-            throw ValidationException::withMessages(['attachments' => 'Lampirkan file hasil atau tulis catatan hasil pekerjaan.']);
-        }
-        $round = 1 + (int) ImportantRequestSubmission::where('important_request_id', $r->id)
-            ->when($r->assignment_mode === 'INDIVIDUAL', fn ($q) => $q->where('assignee_id', $a->id))->count();
-        $auto = ! $r->requires_approval;
-        $sub = ImportantRequestSubmission::create([
-            'important_request_id' => $r->id, 'assignee_id' => $a->id, 'user_id' => $user->id, 'round' => $round,
-            'note' => $note ?: null, 'status' => $auto ? 'OTOMATIS' : 'MENUNGGU_REVIEW',
-        ]);
-        $files = $this->files->claim($user, $tokens, $r, $round > 1 ? 'REVISION' : 'SUBMISSION', submissionId: $sub->id);
-        // collective: one result moves every recipient still working on it
-        $targets = $r->assignment_mode === 'COLLECTIVE'
-            ? ImportantRequestAssignee::where('important_request_id', $r->id)->where('status', '!=', 'SELESAI')->get() : collect([$a]);
-        foreach ($targets as $t) {
-            $t->update($auto
-                ? ['status' => 'SELESAI', 'progress' => 100, 'submitted_at' => now(), 'completed_at' => now()]
-                : ['status' => 'MENUNGGU_REVIEW', 'progress' => 100, 'submitted_at' => now()]);
-        }
-        $this->log($r, $user, 'SUBMITTED', ['putaran' => $round, 'files' => array_map(fn ($f) => $f->original_name, $files), 'otomatis_selesai' => $auto]);
-        $notifyCreator = $auto
-            ? ['success', "{$r->number} selesai", "{$user->name} mengirim hasil (tanpa persetujuan, otomatis selesai)."]
-            : ['info', "Hasil {$r->number} menunggu review", "{$user->name} mengirim hasil".($round > 1 ? " revisi ke-".($round - 1) : '').'.'];
     }
 
     // ------------------------------------------------------------------ creator: review, deadline, cancel, reopen
@@ -298,10 +247,10 @@ class ImportantRequestService
             }
             $sub->update(['status' => $approve ? 'DISETUJUI' : 'REVISI', 'reviewed_by' => $user->id, 'reviewed_at' => now(), 'review_note' => $note ? trim($note) : null]);
             $targets = $r->assignment_mode === 'COLLECTIVE'
-                ? ImportantRequestAssignee::where('important_request_id', $r->id)->where('status', 'MENUNGGU_REVIEW')->get()
+                ? ImportantRequestAssignee::where('important_request_id', $r->id)->whereIn('status', self::HANDED_IN)->get()
                 : ImportantRequestAssignee::whereKey($sub->assignee_id)->get();
             foreach ($targets as $t) {
-                $t->update($approve ? ['status' => 'SELESAI', 'completed_at' => now()] : ['status' => 'REVISI', 'progress' => min($t->progress, 90)]);
+                $t->update($approve ? ['status' => 'SELESAI', 'completed_at' => now()] : ['status' => 'REVISI', 'progress' => 0, 'submitted_at' => null]);
                 $who[] = $t->user_id;
             }
             $this->log($r, $user, $approve ? 'APPROVED' : 'REVISION_REQUESTED', ['putaran' => $sub->round, 'catatan' => $note]);
@@ -362,7 +311,7 @@ class ImportantRequestService
             if ($wasDone) {
                 $request->assignees()->update(['status' => 'REVISI', 'completed_at' => null]);
             }
-            $request->update(['status' => 'MENUNGGU_KONFIRMASI', 'completed_at' => null, 'cancelled_at' => null, 'cancel_reason' => null]);
+            $request->update(['status' => 'DITUGASKAN', 'completed_at' => null, 'cancelled_at' => null, 'cancel_reason' => null]);
             $this->log($request, $user, 'REOPENED', ['alasan' => trim($reason)]);
             $this->recompute($request);
         });
@@ -466,7 +415,7 @@ class ImportantRequestService
 
     // ------------------------------------------------------------------ helpers
 
-    /** The request status from its recipients. */
+    /** The request status from its recipients: done when every part is approved. */
     public function recompute(ImportantRequest $r): void
     {
         if (in_array($r->status, ['DRAFT', 'DIBATALKAN'], true)) {
@@ -474,14 +423,9 @@ class ImportantRequestService
         }
         $s = $r->assignees()->pluck('status');
         $next = match (true) {
-            $s->isEmpty() => 'MENUNGGU_KONFIRMASI',
-            $s->every(fn ($x) => $x === 'SELESAI') => 'SELESAI',
-            $s->contains('TERKENDALA') => 'TERKENDALA',
-            $s->contains('MENUNGGU_REVIEW') => 'MENUNGGU_REVIEW',
-            $s->contains('REVISI') => 'REVISI',
-            $s->contains('IN_PROGRESS') => 'IN_PROGRESS',
-            $s->contains('DITERIMA') || $s->contains('SELESAI') => $s->contains('MENUNGGU_KONFIRMASI') ? 'MENUNGGU_KONFIRMASI' : 'DITERIMA',
-            default => 'MENUNGGU_KONFIRMASI',
+            $s->isNotEmpty() && $s->every(fn ($x) => $x === 'SELESAI') => 'SELESAI',
+            $s->contains(fn ($x) => in_array($x, self::HANDED_IN, true)) => 'MENUNGGU_REVIEW',
+            default => 'DITUGASKAN',
         };
         if ($next !== $r->status) {
             $r->update(['status' => $next, 'completed_at' => $next === 'SELESAI' ? now() : null]);
@@ -535,9 +479,10 @@ class ImportantRequestService
         return $r->assignees()->pluck('user_id')->all();
     }
 
+    /** recipients who still have to hand in */
     private function openAssigneeIds(ImportantRequest $r): array
     {
-        return $r->assignees()->where('status', '!=', 'SELESAI')->pluck('user_id')->all();
+        return $r->assignees()->whereIn('status', self::TO_DO)->pluck('user_id')->all();
     }
 
     private function comment(User $user, ImportantRequest $r, string $kind, string $body, ?int $parentId = null): ImportantRequestComment

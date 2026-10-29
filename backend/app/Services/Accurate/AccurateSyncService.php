@@ -53,21 +53,32 @@ class AccurateSyncService
     protected const STALE_RUNNING_MINUTES = 20;
 
     /**
-     * A real Accurate ITEMNO product code: 3 letters + "." + 4-or-more digits
-     * (e.g. AUT.0001). Anything else (AUT, AUT.01, AUT.01.01, AUT.01.01.01)
-     * is a PARENTITEM category/hierarchy node, not a stockable product —
-     * verified against the real GUDANGSIG2025.GDB data (9,177/9,600 rows
-     * match; the other 423 are category nodes, all with empty UNIT1), see
-     * docs/accurate-database-analysis.md §12.
+     * The code of an Accurate category/hierarchy node: 3 letters, then ".NN" levels (AUT, AUT.01,
+     * AUT.01.01, SSP.27.02) — see docs/accurate-database-analysis.md §12. Products are AUT.0001 etc.,
+     * but Accurate also holds products typed differently (OFN.300, "PUI. 0914") and products without
+     * a unit (PUI.0924): those are products too — see isProductRow().
      */
-    protected const PRODUCT_ITEMNO_PATTERN = '/^[A-Za-z]{3}\.[0-9]{4,}$/';
+    protected const CATEGORY_ITEMNO_PATTERN = '/^[A-Za-z]{3}(\.[0-9]{1,2})*$/';
+
+    /** ITEMNOs that are some row's PARENTITEM (a node with children is never a product) */
+    protected array $parentCodes = [];
+
+    /**
+     * Is this accurate_item row a product (→ Master Produk) or a category node? A node has children
+     * or a category-shaped code (even with a unit: a data anomaly, §3 of the brief). Everything else
+     * is a product, even with an odd code or without a unit — it must never stay out of the Master.
+     */
+    public static function isProductRow(string $itemno, bool $hasChildren): bool
+    {
+        return ! $hasChildren && ! preg_match(self::CATEGORY_ITEMNO_PATTERN, $itemno);
+    }
 
     /** Max category levels resolved upward from a product's PARENTITEM (Anak 1/2/3 — see docs/accurate-database-analysis.md §12 on why there's no "Kategori Induk" level in this data). */
     protected const MAX_CATEGORY_LEVELS = 3;
 
     /**
      * Kategori Induk — NOT walked from Accurate's PARENTITEM chain (there is
-     * no top-level node to read there, see PRODUCT_ITEMNO_PATTERN docblock).
+     * no top-level node to read there, see CATEGORY_ITEMNO_PATTERN docblock).
      * Instead, per explicit user instruction, derived from the item code's
      * own 3-letter prefix through this fixed translation table.
      */
@@ -126,7 +137,10 @@ class AccurateSyncService
      */
     public function startForAgent(): SyncBatch
     {
-        return $this->startBatch(null, 'staging');
+        // the Agent started from the web (AgentRunController): a manual sync, by that user
+        $userId = \Illuminate\Support\Facades\Cache::pull(StockwisePurge::MANUAL_AGENT_RUN);
+
+        return $this->startBatch($userId ? (int) $userId : null, 'staging');
     }
 
     /**
@@ -249,8 +263,9 @@ class AccurateSyncService
         $batch->update(['current_step' => 'stock_opname']);
         $soCounts = $this->runStep($batch, fn () => $this->syncStockOpname($batch));
 
-        // Accurate-only mode: whatever was made in STOCKWISE goes, the data is pure Accurate (Kartu Stock & tracking stay)
-        if (StockwisePurge::enabled()) {
+        // Accurate-only mode, the scheduled night sync: whatever was made in STOCKWISE goes, the data is pure
+        // Accurate (Kartu Stock & tracking stay); the day's syncs and every manual sync keep it
+        if (StockwisePurge::dueNow($batch)) {
             $batch->update(['current_step' => 'stockwise_purge']);
             $this->runStep($batch, fn () => $this->deriveSafely($batch, 'stockwise_purge', function () use ($batch) {
                 $removed = app(StockwisePurge::class)->run();
@@ -519,6 +534,7 @@ class AccurateSyncService
         // walk PARENTITEM chains upward and read each ancestor's own
         // ITEMDESCRIPTION. Built once, reused for all ~9,600 rows below.
         $nodesByCode = $rows->keyBy('ITEMNO');
+        $this->parentCodes = $rows->pluck('PARENTITEM')->filter()->map(fn ($p) => trim((string) $p))->flip()->all();
 
         // Stock = what Accurate itself shows: its GETITEMQUANTITY / GETITEMBAL over
         // ITEMBALANCE + ITEMHIST (AccurateItemQuantity). ITEM.QUANTITY is not kept
@@ -579,10 +595,9 @@ class AccurateSyncService
             return ['bucket' => 'skipped', 'action' => 'SKIP', 'message' => 'accurate_id (ITEMNO) kosong.'];
         }
 
-        // Category/hierarchy nodes (AUT, AUT.01, AUT.01.01, AUT.01.01.01) are
-        // never products, even if a row happens to carry a UNIT1 — the
-        // pattern match is the authoritative rule per the brief (§3).
-        if (! preg_match(self::PRODUCT_ITEMNO_PATTERN, $itemno)) {
+        // Category/hierarchy nodes (AUT, AUT.01, AUT.01.01 — or any row with children) are
+        // never products; every other row is one (isProductRow()).
+        if (! self::isProductRow($itemno, isset($this->parentCodes[$itemno]))) {
             return [
                 'bucket' => 'skipped',
                 'action' => 'SKIP',
@@ -688,17 +703,8 @@ class AccurateSyncService
             ];
         }
 
-        // No match — only create for real products (has a unit); Accurate's
-        // category/placeholder nodes (PARENTITEM tree) have no UNIT1. Kept as
-        // a secondary data-quality guard alongside the regex check above.
-        if ($unit1 === '') {
-            return [
-                'bucket' => 'skipped',
-                'action' => 'SKIP',
-                'message' => 'Tanpa satuan — kemungkinan node kategori (PARENTITEM), bukan barang.',
-            ];
-        }
-
+        // No match: a new product — one without a unit in Accurate comes in too (its unit empty), it
+        // must not stay out of the Master. Only a row without a name is left out (not a real item).
         $description = trim((string) ($row->ITEMDESCRIPTION ?? ''));
         if ($description === '') {
             return ['bucket' => 'skipped', 'action' => 'SKIP', 'message' => 'nama_barang kosong.'];

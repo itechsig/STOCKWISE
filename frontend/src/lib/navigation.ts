@@ -49,6 +49,7 @@ export const NAV: NavGroup[] = [
           { to: '/npbg', label: 'NPBG', keywords: 'barang keluar pengeluaran', permissions: ['npbg.view'] },
           { to: '/ppb', label: 'PPB', keywords: 'permintaan pembelian', permissions: ['ppb.view'] },
           { to: '/purchase-orders', label: 'Purchase Order', keywords: 'po purchasing pembelian', permissions: ['po.view'] },
+          { to: '/purchase-orders/draft', label: 'Draft PO', keywords: 'draft po perbandingan harga vendor penawaran', permissions: ['po.create'] },
           { to: '/ri', label: 'RI', keywords: 'penerimaan barang masuk', permissions: ['ri.view'] },
           { to: '/purchase-returns', label: 'Retur Pembelian', keywords: 'purchase return vendor', permissions: ['purchase_return.view'] },
           { to: '/stock-opnames', label: 'Stock Opname', keywords: 'so hitung fisik penyesuaian', permissions: ['opname.view'] },

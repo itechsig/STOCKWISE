@@ -133,7 +133,8 @@ class ItemRequestFulfillmentService
             $avail = self::available($l->item_id);
             $out[] = [
                 'line_id' => $l->id, 'item_id' => $l->item_id, 'kode_barang' => $l->kode_barang,
-                'deskripsi' => $l->item?->description ?? $l->deskripsi_barang, 'satuan' => $l->satuan,
+                // the requester's name of the item; the Master Produk one beside it
+                'deskripsi' => $l->requestedText(), 'item_description' => $l->item?->description, 'satuan' => $l->satuan,
                 'approved' => (float) $l->approved_qty, 'fulfilled' => (float) $l->fulfilled_qty, 'remaining' => $rem,
                 'available' => $avail, 'suggested' => $l->item_id && $avail !== null ? min($rem, $avail) : 0.0,
                 'in_procurement' => self::inProcurement($l),

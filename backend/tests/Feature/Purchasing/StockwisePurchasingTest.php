@@ -249,34 +249,60 @@ class StockwisePurchasingTest extends TestCase
         $this->assertSame('MENUNGGU_PENGADAAN', ItemRequest::find($req['id'])->status);
     }
 
-    public function test_one_po_number_may_hold_items_of_several_vendors(): void
+    public function test_draft_po_compares_vendor_prices_and_makes_one_po_per_vendor(): void
     {
         [, $ppbId] = $this->requestToPpb(5, 'PPB/SW/009');
         $this->actingAsRole('direktur');
         $this->postJson("/api/ppb/{$ppbId}/approval", ['action' => 'APPROVE'])->assertOk();
         $entry = PurchaseOrder::sole();
         $kertas = $entry->items()->sole();
-        // a second item of the same PO (e.g. another line of the PPB), bought somewhere else
-        $tinta = $entry->items()->create(['description_raw' => 'TINTA', 'qty' => 2, 'unit_price' => 0, 'line_total' => 0]);
-        [$a, $b] = [Vendor::factory()->create(['name' => 'TOKO KERTAS']), Vendor::factory()->create(['name' => 'TOKO TINTA'])];
+        // a second item of the same PPB entry (e.g. another line), bought somewhere else
+        $tinta = $entry->items()->create(['description_raw' => 'TINTA', 'qty' => 2, 'unit_price' => 0, 'line_total' => 0, 'line_status' => 'MENUNGGU_PO',
+            'approved_ppb_id' => $ppbId]);
+        [$a, $b] = [Vendor::factory()->create(['name' => 'TOKO KERTAS']), Vendor::factory()->create(['name' => 'TOKO MURAH'])];
 
+        // the approved PPB's items are in the Draft PO
         $this->actingAsRole('purchasing');
-        // every line needs its vendor
-        $this->putJson("/api/purchase-orders/{$entry->id}/complete", ['lines' => [['id' => $kertas->id, 'qty' => 5, 'unit_price' => 1000, 'vendor_id' => $a->id], ['id' => $tinta->id, 'qty' => 2, 'unit_price' => 500]]])
-            ->assertStatus(422)->assertJsonValidationErrors('lines.1.vendor_id');
-        $po = $this->putJson("/api/purchase-orders/{$entry->id}/complete", ['lines' => [
-            ['id' => $kertas->id, 'qty' => 5, 'unit_price' => 1000, 'vendor_id' => $a->id], ['id' => $tinta->id, 'qty' => 2, 'unit_price' => 500, 'vendor_id' => $b->id],
-        ]])->assertOk()->json('data');
-        $this->assertSame(['TOKO KERTAS', 'TOKO TINTA'], array_column($po['items'], 'vendor_name'));
-        $this->assertSame(['TOKO KERTAS', 'TOKO TINTA'], array_column($po['vendors'], 'name'));
-        $this->assertSame(6000.0, (float) $po['total']);
+        $list = $this->getJson('/api/po-draft-lines')->assertOk()->assertJsonPath('meta.total', 2)->json('data');
+        $this->assertSame(['PPB/SW/009', 5.0], [$list[0]['ppb']['no_ppb'], (float) $list[0]['qty']]);
 
-        // the PO list: each line with its own vendor, and the vendor filter finds the line
-        $rows = collect($this->getJson('/api/purchase-orders')->json('data'))->keyBy('id');
-        $this->assertSame(['TOKO KERTAS', 'TOKO TINTA'], [$rows[$kertas->id]['vendor_name'], $rows[$tinta->id]['vendor_name']]);
-        $this->getJson("/api/purchase-orders?vendor_id={$b->id}")->assertJsonCount(1, 'data')->assertJsonPath('data.0.id', $tinta->id);
-        // the PPB shows the vendor of its own line
+        // the price of each vendor (the comparison): cheapest first; saved again = changed
+        $this->putJson("/api/po-draft-lines/{$kertas->id}/quotes", ['vendor_id' => $a->id, 'unit_price' => 1200])->assertOk();
+        $this->putJson("/api/po-draft-lines/{$kertas->id}/quotes", ['vendor_id' => $b->id, 'unit_price' => 1100, 'note' => 'stok ada'])->assertOk();
+        $row = $this->putJson("/api/po-draft-lines/{$kertas->id}/quotes", ['vendor_id' => $a->id, 'unit_price' => 1000])->assertOk()->json('data');
+        $this->assertSame([['TOKO KERTAS', 1000.0], ['TOKO MURAH', 1100.0]], array_map(fn ($q) => [$q['vendor_name'], (float) $q['unit_price']], $row['quotes']));
+        $this->getJson('/api/po-draft-lines?search=murah')->assertJsonPath('meta.total', 1);
+
+        // picked: kertas from TOKO KERTAS (its quote is the price) → one PO of one vendor, to the Direktur
+        $this->postJson('/api/po-draft-lines/submit', ['line_ids' => [$kertas->id, $tinta->id], 'vendor_id' => $a->id])
+            ->assertStatus(422)->assertJsonValidationErrors('lines.1.unit_price'); // no price for tinta from this vendor
+        $po = $this->postJson('/api/po-draft-lines/submit', ['line_ids' => [$kertas->id], 'vendor_id' => $a->id])->assertCreated()->json('data');
+        $made = PurchaseOrder::find($po['id']);
+        $this->assertSame(['DRAFT', $a->id, 5000.0, 'PPB/SW/009'], [$made->status, $made->vendor_id, (float) $made->total, $made->from_ppb_approval]);
+        $this->assertSame([$made->id, 'PENDING', $a->id], [$kertas->refresh()->purchase_order_id, $kertas->line_status, $kertas->vendor_id]);
+        $this->assertSame(2, $kertas->quotes()->count(), 'the comparison stays with the line');
+        $this->getJson("/api/purchase-orders/{$made->id}")->assertJsonPath('data.approval_status', 'MENUNGGU_DIREKTUR');
+        // kertas left the Draft PO, tinta still waits in its entry
+        $this->getJson('/api/po-draft-lines')->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $tinta->id);
+        $this->postJson('/api/po-draft-lines/submit', ['line_ids' => [$kertas->id], 'vendor_id' => $a->id])->assertStatus(422);
+        $this->putJson("/api/po-draft-lines/{$kertas->id}/quotes", ['vendor_id' => $b->id, 'unit_price' => 1])->assertStatus(422);
+
+        // tinta with its price given → a second PO (the other vendor); the emptied entry goes
+        $this->postJson('/api/po-draft-lines/submit', ['line_ids' => [$tinta->id], 'vendor_id' => $b->id, 'lines' => [['id' => $tinta->id, 'qty' => 3, 'unit_price' => 500]]])->assertCreated();
+        $this->assertNull(PurchaseOrder::find($entry->id), 'the empty "Menunggu PO" entry is gone');
+        $this->assertSame(1500.0, (float) $tinta->refresh()->line_total);
+        $this->getJson('/api/po-draft-lines')->assertJsonPath('meta.total', 0);
+
+        // one PO = one vendor: completing needs the vendor, every line gets it
+        $this->putJson("/api/purchase-orders/{$made->id}/complete", ['lines' => [['id' => $kertas->id, 'qty' => 5, 'unit_price' => 900]]])
+            ->assertStatus(422)->assertJsonValidationErrors('vendor_id');
+        // the PPB knows its PO; it cannot be rejected any more (a PO was made of its lines)
         $this->actingAsRole('super_admin');
-        $this->assertSame('TOKO KERTAS', collect($this->getJson('/api/ppb')->json('data'))->firstWhere('id', $ppbId)['vendor']);
+        $this->assertNotNull($this->getJson("/api/ppb/{$ppbId}")->json('data.approval_po'));
+        $this->actingAsRole('direktur');
+        $this->postJson("/api/ppb/{$ppbId}/approval", ['action' => 'REJECT', 'note' => 'x'])->assertStatus(422);
+        // a later scan does not put its lines back into the Draft PO
+        app(\App\Services\PpbApprovalService::class)->scan();
+        $this->assertSame(0, \App\Services\PoDraftService::waiting()->count());
     }
 }

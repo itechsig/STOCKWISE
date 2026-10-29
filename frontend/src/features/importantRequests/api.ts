@@ -1,18 +1,18 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
-export type IrStatus = 'DRAFT' | 'MENUNGGU_KONFIRMASI' | 'DITERIMA' | 'IN_PROGRESS' | 'TERKENDALA' | 'MENUNGGU_REVIEW' | 'REVISI' | 'SELESAI' | 'DIBATALKAN'
+/** request: DRAFT / DITUGASKAN / MENUNGGU_REVIEW / SELESAI / DIBATALKAN; a recipient's part: DITUGASKAN / DISERAHKAN(_TERLAMBAT) / REVISI / SELESAI */
+export type IrStatus = 'DRAFT' | 'DITUGASKAN' | 'MENUNGGU_REVIEW' | 'DISERAHKAN' | 'DISERAHKAN_TERLAMBAT' | 'REVISI' | 'SELESAI' | 'DIBATALKAN'
 export type IrPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'URGENT'
 export type IrScope = 'mine' | 'tasks' | 'review' | 'done' | 'all'
 
 export const IR_STATUS: Record<IrStatus, { label: string; variant: 'default' | 'neutral' | 'success' | 'warning' | 'danger' }> = {
   DRAFT: { label: 'Draft', variant: 'neutral' },
-  MENUNGGU_KONFIRMASI: { label: 'Menunggu konfirmasi', variant: 'warning' },
-  DITERIMA: { label: 'Diterima', variant: 'default' },
-  IN_PROGRESS: { label: 'In progress', variant: 'default' },
-  TERKENDALA: { label: 'Terkendala', variant: 'danger' },
-  MENUNGGU_REVIEW: { label: 'Menunggu review', variant: 'warning' },
-  REVISI: { label: 'Revisi', variant: 'warning' },
+  DITUGASKAN: { label: 'Ditugaskan', variant: 'default' },
+  MENUNGGU_REVIEW: { label: 'Perlu ditinjau', variant: 'warning' },
+  DISERAHKAN: { label: 'Diserahkan', variant: 'success' },
+  DISERAHKAN_TERLAMBAT: { label: 'Diserahkan terlambat', variant: 'warning' },
+  REVISI: { label: 'Perlu revisi', variant: 'danger' },
   SELESAI: { label: 'Selesai', variant: 'success' },
   DIBATALKAN: { label: 'Dibatalkan', variant: 'neutral' },
 }
@@ -75,6 +75,8 @@ export interface IrAssignee {
   status_label: string
   progress: number
   blocker_note: string | null
+  /** not handed in and past the deadline */
+  late?: boolean
   confirmed_at: string | null
   started_at: string | null
   submitted_at: string | null
@@ -87,7 +89,7 @@ export interface IrSubmission {
   assignee_id: number
   user: string | null
   note: string | null
-  status: 'MENUNGGU_REVIEW' | 'DISETUJUI' | 'REVISI' | 'OTOMATIS'
+  status: 'MENUNGGU_REVIEW' | 'DISETUJUI' | 'REVISI' | 'OTOMATIS' | 'DITARIK'
   reviewed_by: string | null
   reviewed_at: string | null
   review_note: string | null
@@ -111,7 +113,7 @@ export interface IrDetail extends IrRow {
   submissions: IrSubmission[]
   me: {
     is_creator: boolean
-    assignee: { id: number; status: IrStatus; progress: number } | null
+    assignee: { id: number; status: IrStatus; status_label: string; submitted_at: string | null; late: boolean } | null
     can_edit: boolean; can_send: boolean; can_delete: boolean; can_cancel: boolean; can_reopen: boolean; can_comment: boolean
     max_mb: number
   }
@@ -136,8 +138,8 @@ export interface IrComment {
 
 export interface IrSummary {
   badge: number
-  action: { to_confirm: number; to_revise: number; to_review: number; my_open_tasks: number }
-  stats: { total: number; unconfirmed: number; in_progress: number; blocked: number; overdue: number; waiting_review: number; done: number }
+  action: { to_do: number; to_revise: number; to_review: number }
+  stats: { total: number; assigned: number; overdue: number; waiting_review: number; done: number }
   latest: IrRow[]
   urgent: IrRow[]
   near_deadline: IrRow[]
@@ -247,7 +249,7 @@ export const useCreateIr = () => useIrWrite((b: IrPayload) => api.post<{ data: I
 export const useUpdateIr = (id: number) => useIrWrite((b: IrPayload) => api.put<{ data: IrDetail }>(`/api/important-requests/${id}`, b).then((r) => r.data.data))
 export const useDeleteIr = (id: number) => useIrWrite(() => api.delete(`/api/important-requests/${id}`))
 export const useSendIr = (id: number) => useIrWrite(() => api.post(`/api/important-requests/${id}/send`))
-export const useIrAct = (id: number) => useIrWrite((b: { action: string; progress?: number; note?: string | null; reason?: string | null; proposed_deadline?: string | null; attachments?: string[] }) =>
+export const useIrAct = (id: number) => useIrWrite((b: { action: 'submit' | 'unsubmit'; note?: string | null; attachments?: string[] }) =>
   api.post(`/api/important-requests/${id}/act`, b))
 export const useIrReview = (id: number) => useIrWrite((b: { submission: number; approve: boolean; note?: string | null }) =>
   api.post(`/api/important-requests/${id}/submissions/${b.submission}/review`, { approve: b.approve, note: b.note }))

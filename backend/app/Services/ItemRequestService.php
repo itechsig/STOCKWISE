@@ -44,6 +44,51 @@ class ItemRequestService
     public const LINE_IMAGE_ENTITY = 'item_request_line_image';
 
     /**
+     * One requested item met by several Master Produk items: the line becomes one line per item, each
+     * keeping the requester's own words and images (so approval groups them back under "buku"). Only
+     * which item and how many is decided here — whether it comes from stock (NPBG) or is bought
+     * (Draft PPB) is the stock's business, after approval.
+     *
+     * @param  list<array{item_id:int, qty:float|int|string}>  $picks
+     */
+    private function split(ItemRequestLine $line, User $admin, array $picks): void
+    {
+        $asked = $line->requestedText();
+        $total = round(array_sum(array_map(fn ($p) => (float) $p['qty'], $picks)), 2);
+        if ($total <= 0 || $total > (float) $line->qty + 0.0001) {
+            throw ValidationException::withMessages(["lines.{$line->id}.qty" => "Jumlah \"{$asked}\" dari semua barang: 1–".rtrim(rtrim(number_format((float) $line->qty, 2, ',', '.'), '0'), ',').' (yang diminta).']);
+        }
+        if (count(array_unique(array_map(fn ($p) => (int) $p['item_id'], $picks))) !== count($picks)) {
+            throw ValidationException::withMessages(["lines.{$line->id}.items" => "Barang yang sama dipilih dua kali untuk \"{$asked}\"."]);
+        }
+        $items = Item::with('unit:id,code')->whereIn('id', array_map(fn ($p) => (int) $p['item_id'], $picks))->get()->keyBy('id');
+        $rest = (float) $line->qty - $total; // asked but not given: stays on the first line's request
+        $images = \App\Models\TrackingPhoto::where(['entity' => self::LINE_IMAGE_ENTITY, 'entity_id' => $line->id])->get();
+        foreach (array_values($picks) as $i => $p) {
+            $item = $items->get((int) $p['item_id']);
+            if (! $item->is_active) {
+                throw ValidationException::withMessages(["lines.{$line->id}.items" => "{$item->description} nonaktif di Master Produk, aktifkan atau pilih barang lain."]);
+            }
+            $qty = round((float) $p['qty'], 2);
+            $target = $i === 0 ? $line : tap($line->replicate(['item_id', 'kode_barang', 'decision', 'approved_qty', 'decided_by', 'decided_at']), function ($copy) use ($asked) {
+                $copy->deskripsi_peminta = $asked;
+            });
+            $target->matchTo($item);
+            $target->fill(['qty' => $i === 0 ? $qty + $rest : $qty, 'decision' => 'NPBG', 'approved_qty' => $qty, 'decided_by' => $admin->id, 'decided_at' => now()])->save();
+            // the requester's images go with every part (own copies: one replaced never breaks the other)
+            if ($i > 0) {
+                foreach ($images as $img) {
+                    $path = preg_replace('/(\.[a-z0-9]+)?$/i', "-{$target->id}$1", $img->path, 1);
+                    if (\Illuminate\Support\Facades\Storage::disk('local')->exists($img->path)) {
+                        \Illuminate\Support\Facades\Storage::disk('local')->copy($img->path, $path);
+                        $img->replicate()->fill(['entity_id' => $target->id, 'path' => $path])->save();
+                    }
+                }
+            }
+        }
+    }
+
+    /**
      * @param  iterable<int>  $lineIds
      * @return array<int, list<string>> line id => its image slots
      */
@@ -153,6 +198,15 @@ class ItemRequestService
             ]);
             foreach ($open as $id => $line) {
                 $in = $lines[$id] ?? [];
+                // several Master Produk items for one requested item: one line per item (split() below)
+                if (! empty($in['items']) && count($in['items']) > 1) {
+                    $this->split($line, $admin, $in['items']);
+
+                    continue;
+                }
+                if (! empty($in['items'])) {
+                    $in = ['item_id' => $in['items'][0]['item_id'], 'qty' => $in['items'][0]['qty']];
+                }
                 $itemId = ! empty($in['item_id']) ? (int) $in['item_id'] : $line->item_id;
                 // every line is a Master Produk item: a new one is added there first (Barang / Jasa, stock 0)
                 if (! $itemId) {

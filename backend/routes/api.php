@@ -504,6 +504,13 @@ Route::middleware('auth:sanctum')->group(function (): void {
         Route::post('/purchase-returns/{purchaseReturn}/cancel', [\App\Http\Controllers\Api\PurchaseReturnController::class, 'cancel'])->name('api.purchase-returns.cancel');
     });
 
+    // Draft PO: the items of approved STOCKWISE PPBs — vendor prices compared, picked into one PO per vendor
+    Route::middleware('permission:po.create')->group(function () {
+        Route::get('/po-draft-lines', [\App\Http\Controllers\Api\PoDraftController::class, 'lines'])->name('api.po-draft-lines.index');
+        Route::post('/po-draft-lines/submit', [\App\Http\Controllers\Api\PoDraftController::class, 'submit'])->name('api.po-draft-lines.submit');
+        Route::put('/po-draft-lines/{item}/quotes', [\App\Http\Controllers\Api\PoDraftController::class, 'quote'])->name('api.po-draft-lines.quote');
+        Route::delete('/po-draft-lines/{item}/quotes/{quote}', [\App\Http\Controllers\Api\PoDraftController::class, 'removeQuote'])->name('api.po-draft-lines.quote.destroy');
+    });
     Route::get('/purchase-orders/divisi-options', [PurchaseOrderController::class, 'divisiOptions'])
         ->middleware('permission:po.view')->name('api.po.divisi-options');
     Route::get('/purchase-orders', [PurchaseOrderController::class, 'index'])

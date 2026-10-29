@@ -34,7 +34,6 @@ export function IrFormPage() {
   const [description, setDescription] = useState('')
   const [priority, setPriority] = useState<IrPriority>('MEDIUM')
   const [deadline, setDeadline] = useState('')
-  const [mode, setMode] = useState<'INDIVIDUAL' | 'COLLECTIVE'>('INDIVIDUAL')
   const [picked, setPicked] = useState<number[]>([])
   const [who, setWho] = useState('')
   const [files, setFiles] = useState<PickedFile[]>([])
@@ -44,7 +43,7 @@ export function IrFormPage() {
   useEffect(() => {
     if (!r) return
     setTitle(r.title); setDescription(r.description); setPriority(r.priority); setDeadline(toLocal(r.deadline))
-    setMode(r.assignment_mode); setPicked(r.assignees.map((a) => a.user_id))
+    setPicked(r.assignees.map((a) => a.user_id))
   }, [r])
 
   const locked = new Set(sent ? r!.assignees.map((a) => a.user_id) : [])
@@ -71,7 +70,7 @@ export function IrFormPage() {
     const body: IrPayload = {
       title: title.trim(), description: description.trim(), priority,
       assignee_ids: picked, attachments: tokens,
-      ...(sent ? {} : { deadline: deadline ? new Date(deadline).toISOString() : null, assignment_mode: mode }),
+      ...(sent ? {} : { deadline: deadline ? new Date(deadline).toISOString() : null }),
     }
     try {
       if (editId) {
@@ -130,17 +129,6 @@ export function IrFormPage() {
             {recipients.data && people.length === 0 && <p className="p-3 text-sm text-muted-foreground">Tidak ada yang cocok.</p>}
           </div>
           {sent && <p className="text-xs text-muted-foreground">Penerima yang sudah ditugaskan tidak bisa dihapus; penerima baru bisa ditambahkan.</p>}
-          {picked.length > 1 && (
-            <div className={cn('grid gap-2 sm:grid-cols-2', sent && 'pointer-events-none opacity-60')}>
-              {(['INDIVIDUAL', 'Tugas individu', 'Tiap penerima mengerjakan & mengirim hasilnya sendiri; selesai bila semua selesai.'] as const,
-                ['COLLECTIVE', 'Tugas bersama', 'Satu hasil untuk semua; hasil yang disetujui menyelesaikan semua penerima.'] as const).map(([k, label, hint]) => (
-                <button key={k} type="button" onClick={() => setMode(k as 'INDIVIDUAL' | 'COLLECTIVE')}
-                  className={cn('rounded-lg border p-3 text-left', mode === k ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'bg-card hover:bg-muted/40')}>
-                  <div className="text-sm font-semibold">{label}</div><div className="text-xs text-muted-foreground">{hint}</div>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Advanced options - progressive disclosure */}

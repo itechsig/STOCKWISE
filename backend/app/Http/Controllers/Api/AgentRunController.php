@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Services\Accurate\StockwisePurge;
 use App\Support\WindowsEnv;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
@@ -52,6 +54,11 @@ class AgentRunController extends Controller
         $result = Process::env(WindowsEnv::vars())->timeout(30)->run(['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', $ps]);
         if (! $result->successful()) {
             return response()->json(['message' => 'Gagal menjalankan Sync Agent: '.mb_substr(trim($result->errorOutput()), 0, 300)], 500);
+        }
+
+        // its sync is a manual one (never removes STOCKWISE test data): taken by the batch it starts
+        if ($data['mode'] === 'full') {
+            Cache::put(StockwisePurge::MANUAL_AGENT_RUN, $request->user()->id, now()->addHours(2));
         }
 
         Log::info('[agent-run] manual start', [

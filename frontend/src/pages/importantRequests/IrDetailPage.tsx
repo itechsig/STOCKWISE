@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
-  AlertTriangle, Ban, CalendarClock, Check, CheckCircle2, ClipboardList, Clock, CornerDownRight, Loader2, MessageSquare, Pencil, Play, RotateCcw, Send, ShieldAlert, Trash2, Undo2, Upload,
+  AlertTriangle, Ban, CalendarClock, CheckCircle2, ClipboardList, CornerDownRight, Loader2, MessageSquare, Pencil, RotateCcw, Send, Trash2, Undo2, Upload,
 } from 'lucide-react'
 import {
   useDeleteIr, useIr, useIrAct, useIrAddFiles, useIrCancel, useIrComment, useIrComments, useIrDeadline, useIrDeleteComment, useIrDeleteFile,
@@ -52,7 +52,7 @@ function ReasonDialog({ open, title, label, withDate, dateLabel, required = true
   )
 }
 
-/** What I can do now on this request: simplified action bar with grouped primary and secondary actions. */
+/** What I can do now: hand in / withdraw (recipient), send (creator); the rest under "Lebih banyak". */
 function ActionBar({ r, onTab }: { r: IrDetail; onTab: (t: Tab) => void }) {
   const navigate = useNavigate()
   const act = useIrAct(r.id)
@@ -61,71 +61,58 @@ function ActionBar({ r, onTab }: { r: IrDetail; onTab: (t: Tab) => void }) {
   const deadline = useIrDeadline(r.id)
   const cancel = useIrCancel(r.id)
   const reopen = useIrReopen(r.id)
-  const [dialog, setDialog] = useState<null | 'blocker' | 'extension' | 'deadline' | 'cancel' | 'reopen' | 'progress' | 'more'>(null)
-  const [progress, setProgress] = useState(r.me.assignee?.progress ?? 0)
-  const [progressNote, setProgressNote] = useState('')
+  const [dialog, setDialog] = useState<null | 'deadline' | 'cancel' | 'reopen' | 'more'>(null)
   const mine = r.me.assignee
   const open = !['SELESAI', 'DIBATALKAN', 'DRAFT'].includes(r.status)
   const close = () => setDialog(null)
+  const toDo = !!mine && open && ['DITUGASKAN', 'REVISI'].includes(mine.status)
+  const handedIn = !!mine && open && ['DISERAHKAN', 'DISERAHKAN_TERLAMBAT'].includes(mine.status)
 
-  // Primary action - the most important one
-  let primaryAction: React.ReactNode = null
-  if (mine && open) {
-    if (mine.status === 'MENUNGGU_KONFIRMASI') primaryAction = <Button onClick={() => run(act, { action: 'confirm' }, 'Tugas dikonfirmasi.')}><Check className="size-4" /> Terima tugas</Button>
-    else if (['DITERIMA', 'REVISI', 'TERKENDALA'].includes(mine.status)) primaryAction = <Button onClick={() => run(act, { action: 'start' }, mine.status === 'TERKENDALA' ? 'Pekerjaan dilanjutkan.' : 'Pekerjaan dimulai.')}><Play className="size-4" /> {mine.status === 'TERKENDALA' ? 'Lanjutkan' : mine.status === 'REVISI' ? 'Mulai revisi' : 'Mulai kerjakan'}</Button>
-    else if (['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status)) primaryAction = <Button onClick={() => onTab('review')}><Upload className="size-4" /> Kirim hasil</Button>
+  let primary: React.ReactNode = null
+  if (toDo) {
+    primary = <Button onClick={() => onTab('review')}><Upload className="size-4" /> {mine!.status === 'REVISI' ? 'Serahkan revisi' : 'Serahkan hasil'}</Button>
+  } else if (handedIn) {
+    primary = (
+      <Button variant="outline" disabled={act.isPending}
+        onClick={async () => { if (await confirmDialog({ title: 'Tarik penyerahan?', message: 'Hasil ditarik kembali supaya bisa diperbaiki, lalu diserahkan lagi.', confirmLabel: 'Tarik' })) run(act, { action: 'unsubmit' }, 'Penyerahan ditarik.') }}>
+        <Undo2 className="size-4" /> Tarik penyerahan
+      </Button>
+    )
   } else if (r.me.is_creator && r.me.can_send) {
-    primaryAction = <Button onClick={async () => { if (await confirmDialog({ title: 'Kirim request?', message: `${r.number} dikirim ke ${r.assignees.length} penerima.`, confirmLabel: 'Kirim' })) run(send, undefined, 'Request dikirim.') }}><Send className="size-4" /> Kirim</Button>
+    primary = <Button onClick={async () => { if (await confirmDialog({ title: 'Kirim request?', message: `${r.number} dikirim ke ${r.assignees.length} penerima.`, confirmLabel: 'Kirim' })) run(send, undefined, 'Request dikirim.') }}><Send className="size-4" /> Kirim</Button>
   }
-
-  // Count secondary actions
-  const hasSecondary = (mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI', 'TERKENDALA'].includes(mine.status)) ||
-    (r.me.is_creator && (r.me.can_edit || r.me.can_cancel || r.me.can_delete)) ||
-    r.me.can_reopen
-
-  if (!primaryAction && !hasSecondary) return null
+  const hasSecondary = (r.me.is_creator && (r.me.can_edit || r.me.can_cancel || r.me.can_delete)) || r.me.can_reopen
+  if (!primary && !hasSecondary && !mine) return null
 
   return (
     <>
       <Card className="flex flex-wrap items-center gap-3 border-primary/20 bg-primary/5 p-4">
-        {primaryAction}
-        {hasSecondary && (
-          <Button variant="outline" onClick={() => setDialog('more')}>
-            Lebih banyak
-          </Button>
+        {mine && (
+          <div className="mr-auto text-sm">
+            <span className="text-muted-foreground">Tugas saya: </span>
+            <IrStatusBadge status={mine.status} label={mine.status_label} />
+            {mine.late && <span className="ml-1.5 rounded bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700">Terlambat, belum diserahkan</span>}
+            {mine.submitted_at && <span className="ml-1.5 text-xs text-muted-foreground">diserahkan {fmtDateTime(mine.submitted_at)}</span>}
+          </div>
         )}
+        {primary}
+        {hasSecondary && <Button variant="outline" onClick={() => setDialog('more')}>Lebih banyak</Button>}
       </Card>
 
-      {/* More actions modal */}
       <Modal open={dialog === 'more'} onClose={close} title="Tindakan lainnya" className="max-w-md">
         <div className="space-y-2">
-          {mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status) && (
-            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('progress') }}>
-              <Clock className="mr-2 size-4" /> Update progres
-            </Button>
-          )}
-          {mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status) && (
-            <Button variant="outline" className="w-full justify-start border-red-300 text-red-700 hover:bg-red-50" onClick={() => { close(); setDialog('blocker') }}>
-              <ShieldAlert className="mr-2 size-4" /> Laporkan kendala
-            </Button>
-          )}
-          {mine && open && ['DITERIMA', 'IN_PROGRESS', 'REVISI', 'TERKENDALA'].includes(mine.status) && (
-            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('extension') }}>
-              <CalendarClock className="mr-2 size-4" /> Ajukan perpanjangan deadline
-            </Button>
-          )}
           {r.me.is_creator && r.me.can_edit && (
             <Button variant="outline" className="w-full justify-start" onClick={() => { close(); navigate(`/important-requests/${r.id}/ubah`) }}>
               <Pencil className="mr-2 size-4" /> Ubah request
             </Button>
           )}
           {r.me.is_creator && r.me.can_cancel && (
-            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('deadline') }}>
+            <Button variant="outline" className="w-full justify-start" onClick={() => setDialog('deadline')}>
               <CalendarClock className="mr-2 size-4" /> Ubah deadline
             </Button>
           )}
           {r.me.is_creator && r.me.can_cancel && (
-            <Button variant="outline" className="w-full justify-start text-red-700 hover:text-red-800" onClick={() => { close(); setDialog('cancel') }}>
+            <Button variant="outline" className="w-full justify-start text-red-700 hover:text-red-800" onClick={() => setDialog('cancel')}>
               <Ban className="mr-2 size-4" /> Batalkan request
             </Button>
           )}
@@ -135,30 +122,19 @@ function ActionBar({ r, onTab }: { r: IrDetail; onTab: (t: Tab) => void }) {
             </Button>
           )}
           {r.me.can_reopen && (
-            <Button variant="outline" className="w-full justify-start" onClick={() => { close(); setDialog('reopen') }}>
+            <Button variant="outline" className="w-full justify-start" onClick={() => setDialog('reopen')}>
               <RotateCcw className="mr-2 size-4" /> Buka kembali
             </Button>
           )}
         </div>
       </Modal>
 
-      <ReasonDialog open={dialog === 'blocker'} title="Laporkan kendala" label="Kendalanya" withDate={false} confirm="Laporkan" busy={act.isPending} onClose={close}
-        onSubmit={(reason) => run(act, { action: 'blocker', reason }, 'Kendala dilaporkan.', close)} />
-      <ReasonDialog open={dialog === 'extension'} title="Ajukan perpanjangan deadline" label="Alasan" withDate dateLabel="Deadline yang diusulkan" confirm="Ajukan" busy={act.isPending} onClose={close}
-        onSubmit={(reason, date) => run(act, { action: 'extension', reason, proposed_deadline: date }, 'Usulan dikirim ke pembuat request.', close)} />
       <ReasonDialog open={dialog === 'deadline'} title="Ubah deadline" label="Alasan perubahan" withDate dateLabel="Deadline baru" confirm="Simpan" busy={deadline.isPending} onClose={close}
         onSubmit={(reason, date) => run(deadline, { deadline: date, reason }, 'Deadline diubah.', close)} />
       <ReasonDialog open={dialog === 'cancel'} title={`Batalkan ${r.number}?`} label="Alasan pembatalan" confirm="Batalkan request" busy={cancel.isPending} onClose={close}
         onSubmit={(reason) => run(cancel, { reason }, 'Request dibatalkan.', close)} />
       <ReasonDialog open={dialog === 'reopen'} title={`Buka kembali ${r.number}?`} label="Alasan" confirm="Buka kembali" busy={reopen.isPending} onClose={close}
         onSubmit={(reason) => run(reopen, { reason }, 'Request dibuka kembali.', close)} />
-      <Modal open={dialog === 'progress'} onClose={close} title="Update progres" className="max-w-md"
-        footer={<><Button variant="outline" size="sm" onClick={close}>Batal</Button><Button size="sm" disabled={act.isPending} onClick={() => run(act, { action: 'progress', progress, note: progressNote.trim() || null }, 'Progres diperbarui.', () => { setProgressNote(''); close() })}>Simpan</Button></>}>
-        <div className="space-y-3">
-          <div className="flex items-center gap-3"><input type="range" min={0} max={100} step={5} value={progress} onChange={(e) => setProgress(Number(e.target.value))} className="flex-1 accent-primary" aria-label="Progres" /><span className="w-12 text-right font-semibold tabular-nums">{progress}%</span></div>
-          <Textarea rows={3} value={progressNote} maxLength={5000} onChange={(e) => setProgressNote(e.target.value)} placeholder="Catatan progres (opsional), tampil di diskusi" />
-        </div>
-      </Modal>
     </>
   )
 }
@@ -176,8 +152,7 @@ function Overview({ r }: { r: IrDetail }) {
         <div className="whitespace-pre-wrap text-sm leading-relaxed">{r.description}</div>
         {r.cancel_reason && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">Dibatalkan: {r.cancel_reason}</div>}
         <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-4 text-sm sm:grid-cols-4">
-          {([['Dari', r.creator],
-            ['Jenis', r.assignees.length > 1 ? (r.assignment_mode === 'COLLECTIVE' ? 'Tugas bersama' : 'Tugas individu') : '-'],
+          {([['Dari', r.creator], ['Penerima', `${r.assignees.length} orang`],
             ['Dikirim', fmtDateTime(r.sent_at)], ['Selesai', fmtDateTime(r.completed_at)]] as [string, React.ReactNode][]).map(([k, v]) => (
             <div key={k}><dt className="text-xs text-muted-foreground">{k}</dt><dd className="font-medium">{v}</dd></div>
           ))}
@@ -189,12 +164,14 @@ function Overview({ r }: { r: IrDetail }) {
         <div className="border-b px-4 py-3 text-sm font-semibold">Penerima ({r.assignees.length})</div>
         <ul className="divide-y">
           {r.assignees.map((a) => (
-            <li key={a.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_10rem_12rem] sm:items-center">
-              <div className="min-w-0"><div className="font-medium">{a.name}</div><div className="text-xs text-muted-foreground">{[a.position, a.confirmed_at && `dikonfirmasi ${fmtDateTime(a.confirmed_at)}`].filter(Boolean).join(' · ')}</div>
-                {a.status === 'TERKENDALA' && a.blocker_note && <div className="mt-1 text-xs text-red-700">Kendala: {a.blocker_note}</div>}
+            <li key={a.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+              <div className="min-w-0"><div className="font-medium">{a.name}</div>
+                <div className="text-xs text-muted-foreground">{[a.position, a.submitted_at && `diserahkan ${fmtDateTime(a.submitted_at)}`, a.completed_at && `disetujui ${fmtDateTime(a.completed_at)}`].filter(Boolean).join(' · ')}</div>
               </div>
-              <IrStatusBadge status={a.status} label={a.status_label} />
-              <div className="flex items-center gap-2"><div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"><div className={cn('h-full rounded-full', a.status === 'SELESAI' ? 'bg-emerald-500' : 'bg-primary')} style={{ width: `${a.progress}%` }} /></div><span className="w-10 text-right text-xs tabular-nums">{a.progress}%</span></div>
+              <div className="flex items-center gap-1.5">
+                <IrStatusBadge status={a.status} label={a.status_label} />
+                {a.late && <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700">Terlambat</span>}
+              </div>
             </li>
           ))}
         </ul>
@@ -318,10 +295,11 @@ function DiscussionTab({ r }: { r: IrDetail }) {
 }
 
 const SUB_STATUS: Record<string, { label: string; cls: string }> = {
-  MENUNGGU_REVIEW: { label: 'Menunggu review', cls: 'bg-amber-50 text-amber-800' },
+  MENUNGGU_REVIEW: { label: 'Menunggu ditinjau', cls: 'bg-amber-50 text-amber-800' },
   DISETUJUI: { label: 'Disetujui', cls: 'bg-emerald-50 text-emerald-700' },
-  REVISI: { label: 'Diminta revisi', cls: 'bg-orange-50 text-orange-800' },
-  OTOMATIS: { label: 'Selesai (tanpa persetujuan)', cls: 'bg-emerald-50 text-emerald-700' },
+  REVISI: { label: 'Dikembalikan untuk revisi', cls: 'bg-orange-50 text-orange-800' },
+  OTOMATIS: { label: 'Selesai', cls: 'bg-emerald-50 text-emerald-700' },
+  DITARIK: { label: 'Ditarik', cls: 'bg-slate-100 text-slate-600' },
 }
 
 function ReviewTab({ r }: { r: IrDetail }) {
@@ -331,25 +309,27 @@ function ReviewTab({ r }: { r: IrDetail }) {
   const [files, setFiles] = useState<PickedFile[]>([])
   const [revising, setRevising] = useState<number | null>(null)
   const mine = r.me.assignee
-  const canSubmit = !!mine && ['DITERIMA', 'IN_PROGRESS', 'REVISI'].includes(mine.status) && !['SELESAI', 'DIBATALKAN'].includes(r.status)
+  const canSubmit = !!mine && ['DITUGASKAN', 'REVISI'].includes(mine.status) && !['SELESAI', 'DIBATALKAN'].includes(r.status)
+  const lateNow = !!r.deadline && new Date(r.deadline).getTime() < Date.now()
   const submit = async () => {
     const tokens = readyTokens(files)
     if (tokens === null) return toast.invalid('Tunggu upload file selesai.')
     if (!note.trim() && tokens.length === 0) return toast.invalid('Lampirkan file hasil atau tulis catatan hasil pekerjaan.')
-    if (!(await confirmDialog({ title: 'Kirim hasil?', message: r.requires_approval ? 'Hasil dikirim ke pembuat request untuk ditinjau.' : 'Request ini tanpa persetujuan: bagian Anda langsung selesai.', confirmLabel: 'Kirim hasil' }))) return
-    run(act, { action: 'submit', note: note.trim() || null, attachments: tokens }, 'Hasil dikirim.', () => { setNote(''); setFiles([]) })
+    if (!(await confirmDialog({ title: 'Serahkan hasil?', message: `Hasil dikirim ke pembuat request untuk ditinjau.${lateNow ? ' Deadline sudah lewat: tercatat diserahkan terlambat.' : ''} Selama belum ditinjau, Anda masih bisa menariknya.`, confirmLabel: 'Serahkan' }))) return
+    run(act, { action: 'submit', note: note.trim() || null, attachments: tokens }, lateNow ? 'Hasil diserahkan (terlambat).' : 'Hasil diserahkan.', () => { setNote(''); setFiles([]) })
   }
   return (
     <div className="space-y-4">
       {canSubmit && (
         <Card className="space-y-3 border-primary/30 p-4">
-          <div className="text-sm font-semibold">{mine!.status === 'REVISI' ? 'Kirim hasil revisi' : 'Kirim hasil pekerjaan'}</div>
+          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">{mine!.status === 'REVISI' ? 'Serahkan hasil revisi' : 'Serahkan hasil pekerjaan'}
+            {lateNow && <span className="rounded bg-red-50 px-1.5 py-0.5 text-xs font-medium text-red-700">Deadline lewat: akan tercatat terlambat</span>}</div>
           <Textarea rows={3} value={note} maxLength={5000} onChange={(e) => setNote(e.target.value)} placeholder="Catatan hasil: apa yang sudah dikerjakan / diperbaiki" />
           <IrFilePicker files={files} onChange={setFiles} maxMb={r.me.max_mb} label="Lampirkan file hasil" />
-          <div className="flex justify-end"><Button disabled={act.isPending} onClick={submit}><Upload className="size-4" /> Kirim hasil</Button></div>
+          <div className="flex justify-end"><Button disabled={act.isPending} onClick={submit}><Upload className="size-4" /> Serahkan</Button></div>
         </Card>
       )}
-      {r.submissions.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Belum ada hasil yang dikirim.</p>}
+      {r.submissions.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">Belum ada hasil yang diserahkan.</p>}
       {r.submissions.map((s) => (
         <Card key={s.id} className="space-y-3 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -361,16 +341,16 @@ function ReviewTab({ r }: { r: IrDetail }) {
           {s.reviewed_by && <div className="rounded-md bg-muted/50 px-3 py-2 text-sm"><span className="font-medium">{s.reviewed_by}</span> · {fmtDateTime(s.reviewed_at)}{s.review_note ? `: ${s.review_note}` : ''}</div>}
           {s.can_review && (
             <div className="flex flex-wrap justify-end gap-2 border-t pt-3">
-              <Button variant="outline" className="border-orange-300 text-orange-700 hover:bg-orange-50" onClick={() => setRevising(s.id)}><Undo2 className="size-4" /> Minta revisi</Button>
+              <Button variant="outline" className="border-orange-300 text-orange-700 hover:bg-orange-50" onClick={() => setRevising(s.id)}><Undo2 className="size-4" /> Kembalikan untuk revisi</Button>
               <Button className="bg-emerald-600 text-white hover:bg-emerald-700" disabled={review.isPending}
-                onClick={async () => { if (await confirmDialog({ title: 'Setujui hasil?', message: `Hasil ${s.user} disetujui; bagiannya selesai.`, confirmLabel: 'Setujui' })) run(review, { submission: s.id, approve: true }, 'Hasil disetujui.') }}>
-                <CheckCircle2 className="size-4" /> Setujui
+                onClick={async () => { if (await confirmDialog({ title: 'Setujui hasil?', message: `Hasil ${s.user} disetujui: bagiannya selesai.`, confirmLabel: 'Setujui' })) run(review, { submission: s.id, approve: true }, 'Hasil disetujui.') }}>
+                <CheckCircle2 className="size-4" /> Setujui (selesai)
               </Button>
             </div>
           )}
         </Card>
       ))}
-      <ReasonDialog open={revising !== null} title="Minta revisi" label="Apa yang perlu direvisi" confirm="Minta revisi" busy={review.isPending} onClose={() => setRevising(null)}
+      <ReasonDialog open={revising !== null} title="Kembalikan untuk revisi" label="Apa yang perlu direvisi" confirm="Kembalikan" busy={review.isPending} onClose={() => setRevising(null)}
         onSubmit={(reason) => run(review, { submission: revising!, approve: false, note: reason }, 'Revisi diminta.', () => setRevising(null))} />
     </div>
   )

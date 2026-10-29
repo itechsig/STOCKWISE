@@ -91,6 +91,9 @@ return [
     // sync whatever was made in STOCKWISE is removed (App\Services\Accurate\StockwisePurge) — Kartu Stock,
     // the tracking modules and the settings stay.
     'accurate_only' => (bool) env('STOCKWISE_ACCURATE_ONLY', true),
+    // ...but only by the night sync: a sync started in this window (WIB) removes it, the day's syncs keep it
+    'accurate_only_purge_window' => env('STOCKWISE_PURGE_WINDOW', '18:00-06:00'),
+    'accurate_only_purge_timezone' => 'Asia/Jakarta',
 
     'stockwise_ledger_since' => env('STOCKWISE_LEDGER_SINCE', '2026-10-23 03:00:00'),
 

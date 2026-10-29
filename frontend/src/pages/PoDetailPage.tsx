@@ -218,13 +218,15 @@ function DirectorApproval({ po, onError }: { po: PurchaseOrder; onError: (m: str
       <CardContent className="space-y-3 p-4 text-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="font-medium">{waitingEntry ? 'Menunggu PO — lengkapi vendor & harga' : meta?.label ?? 'PO STOCKWISE'}</div>
+            <div className="font-medium">{waitingEntry ? 'Menunggu PO — barangnya ada di Draft PO' : meta?.label ?? 'PO STOCKWISE'}</div>
             <div className="text-xs text-muted-foreground">
               {po.from_ppb_approval ? `Dari PPB ${po.from_ppb_approval} yang sudah disetujui. ` : ''}PO STOCKWISE disetujui oleh Direktur sebelum dikirim ke vendor.
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            {po.can_complete && <Button size="sm" variant={waitingEntry ? 'default' : 'outline'} onClick={() => setCompleting(true)}>{waitingEntry ? 'Lengkapi PO' : 'Perbaiki & ajukan lagi'}</Button>}
+            {po.can_complete && (waitingEntry
+              ? <Button size="sm" asChild><Link to="/purchase-orders/draft">Buka Draft PO</Link></Button>
+              : <Button size="sm" variant="outline" onClick={() => setCompleting(true)}>Perbaiki & ajukan lagi</Button>)}
             {po.can_approve && !rejecting && <>
               <Button size="sm" variant="outline" className="border-orange-300 text-orange-700 hover:bg-orange-50" disabled={action.isPending} onClick={() => setRejecting(true)}>Revisi</Button>
               <Button size="sm" disabled={action.isPending} onClick={() => run('approve')}>Approve (Direktur)</Button>
@@ -256,10 +258,7 @@ function DirectorApproval({ po, onError }: { po: PurchaseOrder; onError: (m: str
   )
 }
 
-/**
- * Purchasing completes a STOCKWISE PO: price and vendor of every item — one PO number may hold items
- * of several vendors (the main vendor is for every item that does not pick its own).
- */
+/** Purchasing fixes a STOCKWISE PO the Direktur sent back: its vendor (one PO = one vendor), qty and prices. */
 function CompletePoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => void }) {
   const complete = useCompletePo(po.id)
   const { data: vendors } = useVendors({ limit: 2000, is_active: '1' })
@@ -267,33 +266,23 @@ function CompletePoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => vo
   const [expected, setExpected] = useState(po.expected_date ?? '')
   const [lines, setLines] = useState(() => (po.items ?? []).map((l) => ({
     id: l.id, code: l.item_code, description: l.description, unit: l.unit, qty: String(Number(l.qty)), price: String(Number(l.unit_price) || ''),
-    // its own vendor when it differs from the PO's
-    vendor: (l.vendor_id && l.vendor_id !== po.vendor?.id ? l.vendor_id : '') as number | '',
   })))
   const [err, setErr] = useState<string | null>(null)
   const num = (v: string) => Number(v.trim().replace(',', '.'))
   const total = lines.reduce((t, l) => t + (num(l.qty) || 0) * (num(l.price) || 0), 0)
-  const name = (id: number | '') => (vendors ?? []).find((v) => v.id === id)?.name ?? ''
-  // subtotal per vendor: one PO number, several vendors
-  const perVendor = Object.entries(lines.reduce<Record<string, number>>((m, l) => {
-    const v = name(l.vendor || vendorId) || 'Belum dipilih'
-    m[v] = (m[v] ?? 0) + (num(l.qty) || 0) * (num(l.price) || 0)
-    return m
-  }, {}))
   const set = (i: number, patch: Partial<(typeof lines)[number]>) => setLines((ls) => ls.map((x, j) => (j === i ? { ...x, ...patch } : x)))
   const submit = () => {
     setErr(null)
-    const missing = lines.find((l) => !l.vendor && !vendorId)
-    if (missing) return invalidTo(setErr, `Pilih vendor untuk ${missing.description}, atau isi Vendor utama.`)
+    if (!vendorId) return invalidTo(setErr, 'Pilih vendor PO ini.')
     if (lines.some((l) => !(num(l.qty) > 0) || !(num(l.price) >= 0) || l.price.trim() === '')) return invalidTo(setErr, 'Isi qty (> 0) dan harga setiap barang.')
     complete.mutate({
-      vendor_id: vendorId ? Number(vendorId) : null, expected_date: expected || null,
-      lines: lines.map((l) => ({ id: l.id, qty: num(l.qty), unit_price: num(l.price), vendor_id: l.vendor ? Number(l.vendor) : null })),
+      vendor_id: Number(vendorId), expected_date: expected || null,
+      lines: lines.map((l) => ({ id: l.id, qty: num(l.qty), unit_price: num(l.price) })),
     }, { onSuccess: onClose, onError: (e) => setErr(apiErrorMessage(e)) })
   }
   return (
     <Modal open onClose={onClose} title={`Lengkapi ${po.number}`} className="max-w-5xl"
-      description="Vendor dan harga tiap barang, lalu PO diajukan ke Direktur. Barang dalam satu PO boleh dari vendor berbeda."
+      description="Vendor dan harga tiap barang, lalu PO diajukan lagi ke Direktur. Satu PO untuk satu vendor."
       footer={<>
         <span className="mr-auto text-sm font-medium">Total {rupiah(total)}</span>
         <Button variant="outline" size="sm" onClick={onClose}>Batal</Button>
@@ -301,22 +290,20 @@ function CompletePoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => vo
       </>}>
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1"><Label htmlFor="cp-vendor">Vendor utama</Label>
+          <div className="space-y-1"><Label htmlFor="cp-vendor">Vendor *</Label>
             <Select id="cp-vendor" value={vendorId} onChange={(e) => setVendorId(e.target.value ? Number(e.target.value) : '')}>
               <option value="">Pilih vendor…</option>
               {(vendors ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
             </Select>
-            <p className="text-xs text-muted-foreground">Untuk barang yang kolom Vendor-nya "sama dengan vendor utama".</p>
           </div>
           <div className="space-y-1"><Label htmlFor="cp-exp">Perkiraan tiba</Label><Input id="cp-exp" type="date" value={expected} onChange={(e) => setExpected(e.target.value)} /></div>
         </div>
         <div className="overflow-x-auto rounded-lg border">
-          <table className="w-full min-w-[820px] text-sm">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="whitespace-nowrap border-b bg-muted text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="w-10 px-3 py-2.5 text-center font-medium">No</th>
                 <th className="min-w-[14rem] px-3 py-2.5 font-medium">Barang</th>
-                <th className="min-w-[14rem] px-3 py-2.5 font-medium">Vendor</th>
                 <th className="px-3 py-2.5 text-right font-medium">Qty</th>
                 <th className="px-3 py-2.5 text-right font-medium">Harga (Rp)</th>
                 <th className="px-3 py-2.5 text-right font-medium">Subtotal</th>
@@ -327,12 +314,6 @@ function CompletePoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => vo
                 <tr key={l.id} className="align-top even:bg-muted/20">
                   <td className="px-3 py-2.5 text-center tabular-nums text-muted-foreground">{i + 1}</td>
                   <td className="px-3 py-2.5"><div className="font-medium">{l.description}</div><div className="font-mono text-xs text-muted-foreground">{[l.code, l.unit].filter(Boolean).join(' · ')}</div></td>
-                  <td className="px-3 py-2">
-                    <Select className="h-9" value={l.vendor} aria-label={`Vendor ${l.description}`} onChange={(e) => set(i, { vendor: e.target.value ? Number(e.target.value) : '' })}>
-                      <option value="">{vendorId ? `Sama dengan vendor utama (${name(vendorId)})` : 'Pilih vendor…'}</option>
-                      {(vendors ?? []).map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                    </Select>
-                  </td>
                   <td className="px-3 py-2"><Input className="ml-auto h-9 w-24 text-right tabular-nums" inputMode="decimal" value={l.qty} aria-label={`Qty ${l.description}`} onChange={(e) => set(i, { qty: e.target.value })} /></td>
                   <td className="px-3 py-2"><Input className="ml-auto h-9 w-32 text-right tabular-nums" inputMode="decimal" value={l.price} placeholder="harga" aria-label={`Harga ${l.description}`} onChange={(e) => set(i, { price: e.target.value })} /></td>
                   <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums">{rupiah((num(l.qty) || 0) * (num(l.price) || 0))}</td>
@@ -341,12 +322,6 @@ function CompletePoModal({ po, onClose }: { po: PurchaseOrder; onClose: () => vo
             </tbody>
           </table>
         </div>
-        {perVendor.length > 1 && (
-          <div className="rounded-lg border bg-muted/30 p-3 text-sm">
-            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Per vendor</div>
-            <ul className="grid gap-1 sm:grid-cols-2">{perVendor.map(([v, t]) => <li key={v} className="flex justify-between gap-3"><span>{v}</span><span className="tabular-nums">{rupiah(t)}</span></li>)}</ul>
-          </div>
-        )}
         {err && <p className="text-sm text-destructive">{err}</p>}
       </div>
     </Modal>
