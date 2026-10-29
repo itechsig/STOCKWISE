@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
-import { AlertTriangle, Ban, CheckCircle2, ClipboardList, Loader2, Copy, Lock, MessageSquare, PackageCheck, Plus, Search, Undo2 } from 'lucide-react'
+import { AlertTriangle, Ban, CheckCircle2, ChevronLeft, ChevronRight, ClipboardList, Loader2, Copy, Lock, MessageSquare, MousePointerClick, PackageCheck, Plus, Search, Undo2 } from 'lucide-react'
 import { toast, invalidTo } from '@/lib/notify'
 import { useAuth } from '@/auth/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
@@ -297,7 +297,7 @@ function LineName({ line, requestId }: { line: ItemRequestLine; requestId: numbe
  * The items: asked → approved → handed over → left, the stock now, the status (a table; cards on a phone).
  * Manager / Direktur do not change quantities here: they send the request back to admin gudang.
  */
-function ItemsTable({ req, onSelectLine }: { req: ItemRequestDetail; onSelectLine: (id: number) => void }) {
+function ItemsTable({ req, selectedLineId, onSelectLine }: { req: ItemRequestDetail; selectedLineId: number | null; onSelectLine: (id: number) => void }) {
   const decided = req.lines.some((l) => l.approved_qty != null)
   // during the Manager / Direktur approval nothing is handed over yet: no Diserahkan / Sisa columns
   const handing = decided && !['APPROVAL_MANAGER', 'APPROVAL_DIREKTUR'].includes(req.status)
@@ -320,7 +320,8 @@ function ItemsTable({ req, onSelectLine }: { req: ItemRequestDetail; onSelectLin
       {/* phone: one card per item */}
       <ul className="divide-y sm:hidden">
         {req.lines.map((l) => (
-          <li key={l.id} className="space-y-2 p-4 text-sm">
+          <li key={l.id} className={cn('space-y-2 p-4 text-sm', l.decision === null && 'cursor-pointer active:bg-muted/50', selectedLineId === l.id && 'bg-blue-50 shadow-[inset_3px_0_0_theme(colors.blue.500)]')}
+            onClick={() => l.decision === null && onSelectLine(l.id)}>
             <div className="flex items-start justify-between gap-3"><LineName line={l} requestId={req.id} /><DecisionCell line={l} /></div>
             <dl className="grid gap-1 text-center text-xs" style={{ gridTemplateColumns: `repeat(${1 + (decided ? 1 : 0) + (handing ? 2 : 0) + 1}, minmax(0, 1fr))` }}>
               {([['Diminta', fmtQty(l.qty)], ...(decided ? [['Disetujui', approvedCell(l)]] : []),
@@ -363,7 +364,8 @@ function ItemsTable({ req, onSelectLine }: { req: ItemRequestDetail; onSelectLin
           </thead>
           <tbody className="divide-y">
             {req.lines.map((l, i) => (
-              <tr key={l.id} className={cn('align-top', l.decision === null && 'cursor-pointer hover:bg-muted/50')} onClick={() => l.decision === null && onSelectLine(l.id)}>
+              <tr key={l.id} className={cn('align-top', l.decision === null && 'cursor-pointer hover:bg-muted/50', selectedLineId === l.id && 'bg-blue-50 hover:bg-blue-50 [&>td:first-child]:shadow-[inset_3px_0_0_theme(colors.blue.500)]')}
+                onClick={() => l.decision === null && onSelectLine(l.id)}>
                 <td className="px-4 py-3 tabular-nums text-muted-foreground">{i + 1}</td>
                 <td className="px-3 py-3"><LineName line={l} requestId={req.id} /></td>
                 <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{fmtQty(l.qty)}</td>
@@ -671,6 +673,11 @@ export function ItemRequestDetailPage() {
   const canProcess = !!req && hasPermission('item_request.process') && ['MENUNGGU', 'DIPROSES', 'PERLU_PERBAIKAN'].includes(req.status)
   const open = useMemo(() => (canProcess && req ? req.lines.filter((l) => l.decision === null) : []), [req, canProcess])
   const [choices, setChoices] = useState<Record<number, Choice>>({})
+  // the item being verified: picked in the table "Barang yang diminta" (the first one to verify by default)
+  const [selectedLineId, setSelectedLineId] = useState<number | null>(null)
+  useEffect(() => {
+    setSelectedLineId((id) => (id !== null && open.some((l) => l.id === id) ? id : open[0]?.id ?? null))
+  }, [open])
   const [pelanggan, setPelanggan] = useState('')
   const [tipe, setTipe] = useState<'Penjualan' | 'Non Penjualan'>('Non Penjualan')
   const [err, setErr] = useState<string | null>(null)
@@ -727,7 +734,13 @@ export function ItemRequestDetailPage() {
   const overdue = !!req.needed_date && !['SELESAI', 'DITOLAK', 'DIBATALKAN'].includes(req.status) && new Date(req.needed_date) < new Date(new Date().toDateString())
 
   const matched = open.filter((l) => (choices[l.id]?.items.length ?? 0) > 0).length
-  const toLine = (lineId: number) => document.getElementById(`verify-${lineId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const selectedIdx = open.findIndex((l) => l.id === selectedLineId)
+  const selected = selectedIdx >= 0 ? open[selectedIdx] : null
+  // a click in the table: that item in the verification card (scrolled into view)
+  const toLine = (lineId: number) => {
+    setSelectedLineId(lineId)
+    requestAnimationFrame(() => document.getElementById('verifikasi')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+  }
   // the round icon: green when done, red when rejected, grey when cancelled
   const dot = req.status === 'SELESAI' ? 'bg-emerald-500' : req.status === 'DITOLAK' ? 'bg-red-500' : req.status === 'DIBATALKAN' ? 'bg-slate-400' : 'bg-primary'
   const title = [...new Set(req.lines.map((l) => l.deskripsi_peminta ?? l.deskripsi_barang))]
@@ -858,28 +871,10 @@ export function ItemRequestDetailPage() {
 
           <Card className="rounded-2xl px-4 py-4 shadow-sm sm:px-5"><StepsBar steps={req.timeline} /></Card>
 
-          {/* admin gudang: every item to verify, one card each — no hunting for it in the table */}
-          {open.length > 0 && (
-            <section className="space-y-3">
-              <div className="flex items-end justify-between gap-2 px-1">
-                <h2 className="text-[15px] font-medium">Verifikasi barang</h2>
-                <span className="text-xs text-muted-foreground">{matched} dari {open.length} dicocokkan</span>
-              </div>
-              {open.map((l, i) => choices[l.id] && (
-                <div key={l.id} id={`verify-${l.id}`} className="scroll-mt-20">
-                  <div className="mb-1 px-1 text-xs text-muted-foreground">Barang {i + 1} dari {open.length}</div>
-                  <OpenLine line={l} requestId={req.id} choice={choices[l.id]}
-                    onChange={(c) => setChoices((x) => ({ ...x, [l.id]: c }))}
-                    saving={match.isPending && match.variables?.lineId === l.id}
-                    onPick={(itemId) => match.mutate({ lineId: l.id, itemId }, { onError: (e) => setErr(apiErrorMessage(e)) })} />
-                </div>
-              ))}
-            </section>
-          )}
-
-          {/* what was asked → approved → given (NPBG) / bought (PPB) */}
-          <Panel title={`Barang yang diminta (${req.lines.length})`}>
-            <ItemsTable req={req} onSelectLine={toLine} />
+          {/* what was asked → approved → given (NPBG) / bought (PPB); while verifying, a click picks the item below */}
+          <Panel title={`Barang yang diminta (${req.lines.length})`}
+            aside={open.length > 0 ? <span className="flex items-center gap-1 text-xs text-muted-foreground"><MousePointerClick className="size-3.5" /> Klik barang untuk diverifikasi</span> : undefined}>
+            <ItemsTable req={req} selectedLineId={open.length > 0 ? selectedLineId : null} onSelectLine={toLine} />
             {(req.images?.length ?? 0) > 0 && (
               <div className="space-y-2 border-t px-4 py-3 sm:px-5">
                 <div className="text-xs text-muted-foreground">Gambar dari peminta ({req.images!.length})</div>
@@ -887,6 +882,28 @@ export function ItemRequestDetailPage() {
               </div>
             )}
           </Panel>
+
+          {/* admin gudang: ONE verification card — the item picked in the table, its recommendations and picks */}
+          {open.length > 0 && (
+            <section id="verifikasi" className="scroll-mt-20 space-y-2">
+              <div className="flex items-center justify-between gap-2 px-1">
+                <h2 className="text-[15px] font-medium">Verifikasi barang{selected ? <span className="font-normal text-muted-foreground"> · {selectedIdx + 1} dari {open.length}</span> : null}</h2>
+                <div className="flex items-center gap-1">
+                  <span className="mr-1 text-xs text-muted-foreground">{matched} dari {open.length} dicocokkan</span>
+                  <Button variant="outline" size="sm" className="h-8 px-2" aria-label="Barang sebelumnya" disabled={selectedIdx <= 0} onClick={() => setSelectedLineId(open[selectedIdx - 1].id)}><ChevronLeft className="size-4" /></Button>
+                  <Button variant="outline" size="sm" className="h-8 px-2" aria-label="Barang berikutnya" disabled={selectedIdx < 0 || selectedIdx >= open.length - 1} onClick={() => setSelectedLineId(open[selectedIdx + 1].id)}><ChevronRight className="size-4" /></Button>
+                </div>
+              </div>
+              {selected && choices[selected.id] ? (
+                <OpenLine key={selected.id} line={selected} requestId={req.id} choice={choices[selected.id]}
+                  onChange={(c) => setChoices((x) => ({ ...x, [selected.id]: c }))}
+                  saving={match.isPending && match.variables?.lineId === selected.id}
+                  onPick={(itemId) => match.mutate({ lineId: selected.id, itemId }, { onError: (e) => setErr(apiErrorMessage(e)) })} />
+              ) : (
+                <Card className="rounded-2xl p-8 text-center text-sm text-muted-foreground">Klik barang di tabel "Barang yang diminta" untuk memverifikasinya.</Card>
+              )}
+            </section>
+          )}
 
           <FulfillPanel req={req} panelRef={prepareRef} />
           <div id="konfirmasi" ref={confirmRef} className="scroll-mt-20"><Fulfillments req={req} draft={draft} onDraft={setDraft} /></div>

@@ -94,13 +94,33 @@ export function readyTokens(files: PickedFile[]): string[] | null {
 }
 
 /** Files of a request: name, size, type, who and when; preview (pdf / images) and download, after the server's check. */
-export function IrFileList({ requestId, files, onDelete, empty }: { requestId: number; files: IrFile[]; onDelete?: (f: IrFile) => void; empty?: string }) {
+export function IrFileList({ requestId, files, onDelete, empty, cards }: { requestId: number; files: IrFile[]; onDelete?: (f: IrFile) => void; empty?: string
+  /** Classroom-like attachment cards, two per row */
+  cards?: boolean }) {
   const [busy, setBusy] = useState<number | null>(null)
   const open = async (f: IrFile, preview: boolean) => {
     setBusy(f.id)
     try { await openIrFile(requestId, f, preview) } catch (e) { toast.fromError(e, apiErrorMessage(e)) } finally { setBusy(null) }
   }
   if (files.length === 0) return empty ? <p className="text-sm text-muted-foreground">{empty}</p> : null
+  if (cards) return (
+    <ul className="grid gap-2 sm:grid-cols-2">
+      {files.map((f) => (
+        <li key={f.id} className="flex overflow-hidden rounded-xl border bg-card transition-shadow hover:shadow-sm">
+          <button type="button" className="flex w-16 shrink-0 items-center justify-center border-r bg-muted/60 text-[11px] font-semibold uppercase text-muted-foreground" disabled={busy === f.id}
+            onClick={() => open(f, !!f.previewable)} aria-label={`Buka ${f.name}`}>{busy === f.id ? <Loader2 className="size-4 animate-spin" /> : f.extension ?? 'file'}</button>
+          <div className="min-w-0 flex-1 px-3 py-2">
+            <button type="button" className="block w-full truncate text-left text-sm font-medium hover:text-primary hover:underline" title={f.name} onClick={() => open(f, !!f.previewable)}>{f.name}</button>
+            <div className="truncate text-xs text-muted-foreground">{fmtSize(f.size)} · {f.uploader ?? '-'}</div>
+          </div>
+          <div className="flex shrink-0 items-center pr-1">
+            <Button size="sm" variant="ghost" className="h-8 px-2" disabled={busy === f.id} onClick={() => open(f, false)} aria-label={`Unduh ${f.name}`}><Download className="size-4" /></Button>
+            {onDelete && <Button size="sm" variant="ghost" className="h-8 px-2 text-muted-foreground hover:text-destructive" onClick={() => onDelete(f)} aria-label={`Hapus ${f.name}`}><Trash2 className="size-4" /></Button>}
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
   return (
     <ul className="divide-y rounded-lg border bg-card">
       {files.map((f) => (
